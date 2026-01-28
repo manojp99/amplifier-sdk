@@ -1,11 +1,14 @@
 """Tests for agents API endpoints."""
 
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
+from amplifier_server.core.session_manager import AgentState
 from amplifier_server.main import app
+from amplifier_server.models import RunResponse, Usage
 
 
 @pytest.fixture
@@ -14,30 +17,48 @@ def client() -> TestClient:
     return TestClient(app)
 
 
+def create_mock_agent_state(
+    agent_id: str = "test-agent-id",
+    instructions: str = "You are helpful.",
+    tools: list[str] | None = None,
+    provider: str = "anthropic",
+    model: str | None = None,
+) -> AgentState:
+    """Create a mock AgentState object."""
+    return AgentState(
+        agent_id=agent_id,
+        created_at=datetime.utcnow(),
+        instructions=instructions,
+        tools=tools or [],
+        provider=provider,
+        model=model,
+        session=None,
+        prepared=None,
+        message_count=0,
+    )
+
+
 @pytest.fixture
 def mock_session_manager() -> MagicMock:
-    """Mock session manager."""
+    """Mock session manager with proper async methods."""
     manager = MagicMock()
-    manager.create_session = AsyncMock(return_value="test-agent-id")
-    manager.get_session = MagicMock(
-        return_value={
-            "agent_id": "test-agent-id",
-            "instructions": "You are helpful.",
-            "created_at": "2024-01-01T00:00:00Z",
-        }
+
+    # Async methods need AsyncMock
+    manager.create_agent = AsyncMock(return_value="test-agent-id")
+    manager.run = AsyncMock(
+        return_value=RunResponse(
+            content="Hello! How can I help?",
+            tool_calls=[],
+            usage=Usage(input_tokens=10, output_tokens=20),
+        )
     )
-    manager.list_sessions = MagicMock(
-        return_value=[{"agent_id": "test-agent-id", "created_at": "2024-01-01T00:00:00Z"}]
-    )
-    manager.delete_session = AsyncMock()
-    manager.execute = AsyncMock(
-        return_value={
-            "content": "Hello! How can I help?",
-            "tool_calls": [],
-            "usage": {"input_tokens": 10, "output_tokens": 20},
-            "stop_reason": "end_turn",
-        }
-    )
+    manager.delete_agent = AsyncMock(return_value=True)
+
+    # Sync methods use MagicMock
+    manager.get_agent = MagicMock(return_value=create_mock_agent_state())
+    manager.list_agents = MagicMock(return_value=["test-agent-id"])
+    manager.active_count = 1
+
     return manager
 
 
@@ -81,7 +102,7 @@ class TestCreateAgent:
                 },
             )
             assert response.status_code == 200
-            mock_session_manager.create_session.assert_called_once()
+            mock_session_manager.create_agent.assert_called_once()
 
     def test_create_agent_missing_instructions(self, client: TestClient) -> None:
         """Create agent without instructions fails."""
@@ -105,10 +126,12 @@ class TestGetAgent:
             assert response.status_code == 200
             data = response.json()
             assert data["agent_id"] == "test-agent-id"
+            assert data["instructions"] == "You are helpful."
+            assert data["provider"] == "anthropic"
 
     def test_get_agent_not_found(self, client: TestClient, mock_session_manager: MagicMock) -> None:
         """Get non-existent agent returns 404."""
-        mock_session_manager.get_session = MagicMock(return_value=None)
+        mock_session_manager.get_agent = MagicMock(return_value=None)
         with patch(
             "amplifier_server.api.agents.get_session_manager",
             return_value=mock_session_manager,
@@ -131,6 +154,7 @@ class TestListAgents:
             data = response.json()
             assert "agents" in data
             assert isinstance(data["agents"], list)
+            assert "count" in data
 
 
 class TestDeleteAgent:
@@ -146,7 +170,21 @@ class TestDeleteAgent:
         ):
             response = client.delete("/agents/test-agent-id")
             assert response.status_code == 200
-            mock_session_manager.delete_session.assert_called_once_with("test-agent-id")
+            data = response.json()
+            assert data["deleted"] is True
+            mock_session_manager.delete_agent.assert_called_once_with("test-agent-id")
+
+    def test_delete_agent_not_found(
+        self, client: TestClient, mock_session_manager: MagicMock
+    ) -> None:
+        """Delete non-existent agent returns 404."""
+        mock_session_manager.delete_agent = AsyncMock(return_value=False)
+        with patch(
+            "amplifier_server.api.agents.get_session_manager",
+            return_value=mock_session_manager,
+        ):
+            response = client.delete("/agents/nonexistent")
+            assert response.status_code == 404
 
 
 class TestRunPrompt:
@@ -179,6 +217,7 @@ class TestRunPrompt:
                 "/agents/test-agent-id/run",
                 json={"prompt": "Hello!"},
             )
+            assert response.status_code == 200
             data = response.json()
             assert "usage" in data
             assert data["usage"]["input_tokens"] == 10
