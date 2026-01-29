@@ -10,6 +10,7 @@ import type {
   RunOptions,
   RunResponse,
   StreamEvent,
+  ToolConfig,
 } from './types';
 
 export class Agent {
@@ -62,9 +63,9 @@ export class Agent {
   }
 
   /**
-   * Get the agent's enabled tools.
+   * Get the agent's enabled tools (strings or ToolConfig objects).
    */
-  get tools(): string[] {
+  get tools(): (string | ToolConfig)[] {
     return this._options.tools ?? [];
   }
 

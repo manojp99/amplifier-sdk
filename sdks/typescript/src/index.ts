@@ -36,17 +36,39 @@
 export { AmplifierClient } from './client';
 export { Agent, run } from './agent';
 export type {
+  // Configuration types
   AgentConfig,
+  ApprovalConfig,
+  HookConfig,
+  ProviderConfig,
+  SubAgentConfig,
+  ToolConfig,
+
+  // Response types
   AgentInfo,
+  ApprovalInfo,
+  RunResponse,
+  StreamEvent,
+  SubAgentInfo,
+  ToolCall,
+  Usage,
+
+  // Recipe types
+  RecipeConfig,
+  RecipeExecution,
+  RecipeStep,
+  RecipeStepResult,
+
+  // Client options
   ClientOptions,
   CreateAgentOptions,
+  ExecuteRecipeOptions,
+  RunOnceOptions,
+  RunOptions,
+  SpawnOptions,
+
+  // Server responses
   HealthResponse,
   Message,
   ModulesResponse,
-  RunOnceOptions,
-  RunOptions,
-  RunResponse,
-  StreamEvent,
-  ToolCall,
-  Usage,
 } from './types';

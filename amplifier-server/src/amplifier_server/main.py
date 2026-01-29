@@ -13,6 +13,7 @@ from amplifier_server.api.agents import one_off_router
 from amplifier_server.api.agents import router as agents_router
 from amplifier_server.api.health import router as health_router
 from amplifier_server.api.modules import router as modules_router
+from amplifier_server.api.recipes import router as recipes_router
 from amplifier_server.config import ServerConfig
 
 # Configure logging
@@ -49,6 +50,7 @@ def create_app(config: ServerConfig | None = None) -> FastAPI:
     app.include_router(health_router)
     app.include_router(agents_router)
     app.include_router(modules_router)
+    app.include_router(recipes_router)
     app.include_router(one_off_router)
 
     @app.on_event("startup")

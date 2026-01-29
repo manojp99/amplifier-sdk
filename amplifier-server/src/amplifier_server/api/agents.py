@@ -8,16 +8,28 @@ from fastapi import APIRouter, Depends, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
 from amplifier_server.core.session_manager import AgentState, SessionManager
-from amplifier_server.models.requests import AgentConfig, OneOffRunRequest, RunRequest
+from amplifier_server.models.requests import (
+    AgentConfig,
+    ApprovalResponse,
+    OneOffRunRequest,
+    RunRequest,
+    SpawnAgentRequest,
+)
 from amplifier_server.models.responses import (
     AgentListResponse,
     AgentResponse,
+    ApprovalListResponse,
     ClearResponse,
     DeleteResponse,
     MessagesResponse,
     RunResponse,
+    SpawnResponse,
+    SubAgentListResponse,
     ToolCall,
     Usage,
+)
+from amplifier_server.models.responses import (
+    ApprovalRequest as ApprovalRequestResponse,
 )
 
 router = APIRouter(prefix="/agents", tags=["agents"])
@@ -50,8 +62,18 @@ def _agent_to_response(agent: AgentState) -> AgentResponse:
         provider=agent.provider,
         model=agent.model,
         tools=agent.tools,
+        orchestrator=agent.orchestrator,
+        context_manager=agent.context_manager,
+        hooks=agent.hooks,
+        agents=agent.available_agents,
         message_count=len(agent.messages),
+        has_approval_config=agent.has_approval_config,
     )
+
+
+# =============================================================================
+# Agent CRUD Endpoints
+# =============================================================================
 
 
 @router.post("", response_model=AgentResponse)
@@ -59,9 +81,9 @@ async def create_agent(
     config: AgentConfig,
     manager: SessionManager = Depends(get_session_manager),
 ) -> AgentResponse:
-    """Create a new agent."""
+    """Create a new agent with full module wiring support."""
     try:
-        agent = await manager.create_agent(config.model_dump())
+        agent = await manager.create_agent(config.model_dump(exclude_none=True))
         return _agent_to_response(agent)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
@@ -100,6 +122,11 @@ async def delete_agent(
     return DeleteResponse(deleted=True)
 
 
+# =============================================================================
+# Execution Endpoints
+# =============================================================================
+
+
 @router.post("/{agent_id}/run", response_model=RunResponse)
 async def run_agent(
     agent_id: str,
@@ -122,6 +149,7 @@ async def run_agent(
         tool_calls=[ToolCall(**tc) for tc in result.get("tool_calls", [])],
         usage=Usage(**result.get("usage", {})),
         turn_count=result.get("turn_count", 1),
+        sub_agents_spawned=result.get("sub_agents_spawned", []),
     )
 
 
@@ -131,16 +159,159 @@ async def stream_agent(
     request: RunRequest,
     manager: SessionManager = Depends(get_session_manager),
 ) -> EventSourceResponse:
-    """Stream execution of a prompt on an agent (SSE)."""
+    """Stream execution with rich event taxonomy (SSE)."""
     agent = await manager.get_agent(agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
 
     async def event_generator():
-        async for event in manager.stream(agent_id, request.prompt, request.max_turns):
+        async for event in manager.stream(
+            agent_id,
+            request.prompt,
+            request.max_turns,
+            event_filter=request.stream_events,
+        ):
             yield {"event": event.event, "data": json.dumps(event.data)}
 
     return EventSourceResponse(event_generator())
+
+
+# =============================================================================
+# Multi-Agent Endpoints
+# =============================================================================
+
+
+@router.post("/{agent_id}/spawn", response_model=SpawnResponse)
+async def spawn_sub_agent(
+    agent_id: str,
+    request: SpawnAgentRequest,
+    manager: SessionManager = Depends(get_session_manager),
+) -> SpawnResponse:
+    """Spawn a sub-agent from a parent agent."""
+    parent = await manager.get_agent(agent_id)
+    if parent is None:
+        raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
+
+    # Check if agent_name exists in parent's agents config
+    if request.agent_name not in parent.available_agents:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Sub-agent '{request.agent_name}' not defined in parent's agents config. "
+            f"Available: {parent.available_agents}",
+        )
+
+    sub_agent = await manager.spawn_agent(
+        parent_id=agent_id,
+        agent_name=request.agent_name,
+        inherit_context=request.inherit_context,
+        inherit_context_turns=request.inherit_context_turns,
+    )
+
+    if sub_agent is None:
+        raise HTTPException(status_code=500, detail="Failed to spawn sub-agent")
+
+    # Run initial prompt if provided
+    if request.prompt:
+        await manager.run(sub_agent.agent_id, request.prompt)
+
+    return SpawnResponse(
+        agent_id=sub_agent.agent_id,
+        parent_id=agent_id,
+        agent_name=request.agent_name,
+        status=sub_agent.status.value,
+    )
+
+
+@router.get("/{agent_id}/sub-agents", response_model=SubAgentListResponse)
+async def list_sub_agents(
+    agent_id: str,
+    manager: SessionManager = Depends(get_session_manager),
+) -> SubAgentListResponse:
+    """List sub-agents spawned by a parent agent."""
+    parent = await manager.get_agent(agent_id)
+    if parent is None:
+        raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
+
+    sub_agents = await manager.list_sub_agents(agent_id)
+    return SubAgentListResponse(
+        sub_agents=[
+            {
+                "agent_id": sa.agent_id,
+                "parent_id": sa.parent_id,
+                "agent_name": sa.agent_name,
+                "created_at": sa.created_at.isoformat(),
+            }
+            for sa in sub_agents
+        ],
+        count=len(sub_agents),
+    )
+
+
+# =============================================================================
+# Approval Endpoints
+# =============================================================================
+
+
+@router.get("/{agent_id}/approvals", response_model=ApprovalListResponse)
+async def list_pending_approvals(
+    agent_id: str,
+    manager: SessionManager = Depends(get_session_manager),
+) -> ApprovalListResponse:
+    """List pending approval requests for an agent."""
+    agent = await manager.get_agent(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
+
+    approvals = await manager.list_pending_approvals(agent_id)
+    return ApprovalListResponse(
+        approvals=[
+            ApprovalRequestResponse(
+                approval_id=a.approval_id,
+                agent_id=a.agent_id,
+                tool=a.tool,
+                action=a.action,
+                args=a.args,
+                created_at=a.created_at.isoformat(),
+                timeout_at=a.timeout_at.isoformat(),
+            )
+            for a in approvals
+        ],
+        count=len(approvals),
+    )
+
+
+@router.post("/{agent_id}/approvals/{approval_id}")
+async def respond_to_approval(
+    agent_id: str,
+    approval_id: str,
+    response: ApprovalResponse,
+    manager: SessionManager = Depends(get_session_manager),
+) -> dict:
+    """Respond to an approval request (approve or deny)."""
+    agent = await manager.get_agent(agent_id)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
+
+    result = await manager.respond_to_approval(
+        agent_id=agent_id,
+        approval_id=approval_id,
+        approved=response.approved,
+        reason=response.reason,
+    )
+
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"Approval request not found: {approval_id}")
+
+    return {
+        "approval_id": result.approval_id,
+        "approved": result.approved,
+        "reason": result.reason,
+    }
+
+
+# =============================================================================
+# Message Endpoints
+# =============================================================================
 
 
 @router.get("/{agent_id}/messages", response_model=MessagesResponse)
@@ -171,7 +342,10 @@ async def clear_messages(
     return ClearResponse(cleared=True)
 
 
-# One-off execution endpoint (no persistent agent)
+# =============================================================================
+# One-off Execution (Separate Router)
+# =============================================================================
+
 one_off_router = APIRouter(tags=["execution"])
 
 
@@ -185,15 +359,17 @@ async def run_once(
     config = AgentConfig(
         instructions=request.instructions,
         provider=request.provider,
+        providers=None,
         model=request.model,
         tools=request.tools,
         orchestrator="basic",
         context_manager="simple",
+        approval=None,
     )
 
     agent = None
     try:
-        agent = await manager.create_agent(config.model_dump())
+        agent = await manager.create_agent(config.model_dump(exclude_none=True))
         result = await manager.run(agent.agent_id, request.prompt, request.max_turns)
 
         return RunResponse(
@@ -201,6 +377,7 @@ async def run_once(
             tool_calls=[ToolCall(**tc) for tc in result.get("tool_calls", [])],
             usage=Usage(**result.get("usage", {})),
             turn_count=result.get("turn_count", 1),
+            sub_agents_spawned=result.get("sub_agents_spawned", []),
         )
     finally:
         # Clean up temporary agent

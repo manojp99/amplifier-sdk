@@ -71,7 +71,7 @@ class Agent:
         return self._config.instructions
 
     @property
-    def provider(self) -> str:
+    def provider(self) -> str | None:
         """Get the agent's provider."""
         return self._config.provider
 
@@ -81,9 +81,9 @@ class Agent:
         return self._config.model
 
     @property
-    def tools(self) -> list[str]:
-        """Get the agent's enabled tools."""
-        return self._config.tools
+    def tools(self) -> list[Any]:
+        """Get the agent's enabled tools (strings or ToolConfig objects)."""
+        return list(self._config.tools)
 
     @classmethod
     async def create(
@@ -118,10 +118,10 @@ class Agent:
             instructions=instructions,
             provider=provider,
             model=model,
-            tools=tools or [],
+            tools=list(tools) if tools else [],
             orchestrator=orchestrator,
             context_manager=context_manager,
-            hooks=hooks or [],
+            hooks=list(hooks) if hooks else [],
             config=config or {},
         )
 
