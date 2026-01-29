@@ -1,11 +1,7 @@
-"""API endpoint modules."""
+"""API routes for the Amplifier Server."""
 
-from .agents import router as agents_router
-from .health import router as health_router
-from .recipes import router as recipes_router
+from amplifier_server.api.agents import router as agents_router
+from amplifier_server.api.health import router as health_router
+from amplifier_server.api.modules import router as modules_router
 
-__all__ = [
-    "agents_router",
-    "health_router",
-    "recipes_router",
-]
+__all__ = ["health_router", "agents_router", "modules_router"]

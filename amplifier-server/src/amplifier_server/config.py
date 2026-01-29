@@ -1,65 +1,96 @@
-"""Server configuration."""
+"""Server configuration and module registry."""
 
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass
+class ModuleSpec:
+    """Specification for a module."""
+
+    module: str
+    config_schema: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class ServerConfig:
-    """Configuration for the Amplifier server."""
+    """Server configuration."""
 
-    # Server settings
     host: str = "0.0.0.0"
-    port: int = 8080
+    port: int = 8000
+    require_auth: bool = False
+    api_keys: list[str] = field(default_factory=list)
+    max_agents: int = 100
     log_level: str = "info"
-
-    # Authentication
-    api_key: str | None = None
-    require_auth: bool = True
-
-    # Provider defaults
-    default_provider: str = "anthropic"
-    default_model: str | None = None
-
-    # Session limits
-    max_sessions: int = 100
-    session_timeout_seconds: int = 3600  # 1 hour
-
-    # Request limits
-    max_tokens_per_request: int | None = None
-    max_turns_per_request: int = 50
 
     @classmethod
     def from_env(cls) -> ServerConfig:
         """Load configuration from environment variables."""
         return cls(
-            host=os.getenv("AMPLIFIER_HOST", "0.0.0.0"),
-            port=int(os.getenv("AMPLIFIER_PORT", "8080")),
+            host=os.getenv("AMPLIFIER_SERVER_HOST", "0.0.0.0"),
+            port=int(os.getenv("AMPLIFIER_SERVER_PORT", "8000")),
+            require_auth=os.getenv("AMPLIFIER_REQUIRE_AUTH", "").lower() == "true",
+            api_keys=os.getenv("AMPLIFIER_API_KEYS", "").split(",")
+            if os.getenv("AMPLIFIER_API_KEYS")
+            else [],
+            max_agents=int(os.getenv("AMPLIFIER_MAX_AGENTS", "100")),
             log_level=os.getenv("AMPLIFIER_LOG_LEVEL", "info"),
-            api_key=os.getenv("AMPLIFIER_API_KEY"),
-            require_auth=os.getenv("AMPLIFIER_REQUIRE_AUTH", "true").lower() == "true",
-            default_provider=os.getenv("AMPLIFIER_DEFAULT_PROVIDER", "anthropic"),
-            default_model=os.getenv("AMPLIFIER_DEFAULT_MODEL"),
-            max_sessions=int(os.getenv("AMPLIFIER_MAX_SESSIONS", "100")),
-            session_timeout_seconds=int(os.getenv("AMPLIFIER_SESSION_TIMEOUT", "3600")),
         )
 
 
-# Global config instance
-_config: ServerConfig | None = None
+# Module Registry - maps friendly names to module specifications
+# Modules must be pre-installed on the server
+MODULE_REGISTRY: dict[str, dict[str, ModuleSpec]] = {
+    "providers": {
+        "anthropic": ModuleSpec(
+            module="provider-anthropic",
+            config_schema={
+                "api_key": {"type": "string", "env": "ANTHROPIC_API_KEY"},
+                "model": {"type": "string", "default": "claude-sonnet-4-20250514"},
+            },
+        ),
+        "openai": ModuleSpec(
+            module="provider-openai",
+            config_schema={
+                "api_key": {"type": "string", "env": "OPENAI_API_KEY"},
+                "model": {"type": "string", "default": "gpt-4o"},
+            },
+        ),
+        "azure": ModuleSpec(
+            module="provider-azure",
+            config_schema={
+                "endpoint": {"type": "string", "env": "AZURE_OPENAI_ENDPOINT"},
+                "api_key": {"type": "string", "env": "AZURE_OPENAI_API_KEY"},
+            },
+        ),
+    },
+    "tools": {
+        "bash": ModuleSpec(module="tool-bash"),
+        "filesystem": ModuleSpec(module="tool-filesystem"),
+        "web_search": ModuleSpec(module="tool-web"),
+        "web_fetch": ModuleSpec(module="tool-web"),
+    },
+    "orchestrators": {
+        "basic": ModuleSpec(module="loop-basic"),
+        "streaming": ModuleSpec(module="loop-streaming"),
+    },
+    "context_managers": {
+        "simple": ModuleSpec(module="context-simple"),
+    },
+    "hooks": {
+        "logging": ModuleSpec(module="hook-logging"),
+    },
+}
 
 
-def get_config() -> ServerConfig:
-    """Get the current server configuration."""
-    global _config
-    if _config is None:
-        _config = ServerConfig.from_env()
-    return _config
+def get_module_spec(category: str, name: str) -> ModuleSpec | None:
+    """Get a module specification by category and name."""
+    return MODULE_REGISTRY.get(category, {}).get(name)
 
 
-def set_config(config: ServerConfig) -> None:
-    """Set the server configuration (for testing)."""
-    global _config
-    _config = config
+def list_available_modules() -> dict[str, list[str]]:
+    """List all available modules by category."""
+    return {category: list(modules.keys()) for category, modules in MODULE_REGISTRY.items()}

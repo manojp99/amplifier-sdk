@@ -1,40 +1,27 @@
-"""Health check endpoint."""
-
-from __future__ import annotations
+"""Health check API endpoints."""
 
 from fastapi import APIRouter
 
-from .. import __version__
-from ..core.session_manager import get_session_manager
-from ..models import HealthResponse
+from amplifier_server import __version__
+from amplifier_server.models.responses import HealthResponse
 
 router = APIRouter(tags=["health"])
 
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check() -> HealthResponse:
-    """Health check endpoint.
+    """Health check endpoint."""
+    # Try to get core version
+    core_version = None
+    try:
+        from amplifier_core import __version__ as core_ver
 
-    Returns server status, version, and active session count.
-    No authentication required.
-    """
-    manager = get_session_manager()
+        core_version = core_ver
+    except ImportError:
+        pass
 
     return HealthResponse(
         status="ok",
         version=__version__,
-        active_sessions=manager.active_count,
+        core_version=core_version,
     )
-
-
-@router.get("/")
-async def root() -> dict:
-    """Root endpoint.
-
-    Returns basic server information.
-    """
-    return {
-        "name": "amplifier-server",
-        "version": __version__,
-        "docs": "/docs",
-    }

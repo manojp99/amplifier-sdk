@@ -1,10 +1,12 @@
-"""Core server components."""
+"""Core server functionality."""
 
-from .auth import AuthMiddleware, verify_api_key
-from .session_manager import SessionManager
+from amplifier_server.core.session_manager import SessionManager, AgentState
+from amplifier_server.core.config_translator import translate_to_mount_plan
+from amplifier_server.core.module_resolver import ServerModuleResolver
 
 __all__ = [
     "SessionManager",
-    "AuthMiddleware",
-    "verify_api_key",
+    "AgentState",
+    "translate_to_mount_plan",
+    "ServerModuleResolver",
 ]

@@ -1,12 +1,16 @@
 /**
- * HTTP client for Amplifier server
+ * HTTP client for Amplifier server.
  */
 
 import type {
+  AgentInfo,
   ClientOptions,
   CreateAgentOptions,
-  ExecuteRecipeOptions,
-  RecipeExecution,
+  HealthResponse,
+  Message,
+  ModulesResponse,
+  RunOnceOptions,
+  RunOptions,
   RunResponse,
   StreamEvent,
 } from './types';
@@ -17,28 +21,40 @@ export class AmplifierClient {
   private timeout: number;
 
   /**
-   * Create a new Amplifier client
+   * Create a new Amplifier client.
    *
    * @example
    * ```typescript
    * const client = new AmplifierClient({
-   *   baseUrl: 'http://localhost:8080',
-   *   apiKey: 'your-api-key'
+   *   baseUrl: 'http://localhost:8000'
    * });
    *
+   * // Create agent
    * const agentId = await client.createAgent({
    *   instructions: 'You are helpful.',
+   *   provider: 'anthropic',
    *   tools: ['bash']
    * });
    *
+   * // Run prompt
    * const response = await client.run(agentId, 'Hello!');
    * console.log(response.content);
+   *
+   * // Stream response
+   * for await (const event of client.stream(agentId, 'Write a poem')) {
+   *   if (event.data.text) {
+   *     process.stdout.write(event.data.text as string);
+   *   }
+   * }
+   *
+   * // Cleanup
+   * await client.deleteAgent(agentId);
    * ```
    */
   constructor(options: ClientOptions = {}) {
-    this.baseUrl = (options.baseUrl || 'http://localhost:8080').replace(/\/$/, '');
+    this.baseUrl = (options.baseUrl ?? 'http://localhost:8000').replace(/\/$/, '');
     this.apiKey = options.apiKey;
-    this.timeout = options.timeout || 300000;
+    this.timeout = options.timeout ?? 300000;
   }
 
   private getHeaders(): Record<string, string> {
@@ -72,7 +88,7 @@ export class AmplifierClient {
         throw new Error(`HTTP ${response.status}: ${error}`);
       }
 
-      return response.json();
+      return (await response.json()) as T;
     } finally {
       clearTimeout(timeoutId);
     }
@@ -80,122 +96,187 @@ export class AmplifierClient {
 
   // Health
 
-  async health(): Promise<{ status: string }> {
-    return this.request('GET', '/health');
+  /**
+   * Check server health.
+   */
+  async health(): Promise<HealthResponse> {
+    return this.request<HealthResponse>('GET', '/health');
+  }
+
+  // Modules
+
+  /**
+   * List available modules.
+   */
+  async listModules(): Promise<ModulesResponse> {
+    return this.request<ModulesResponse>('GET', '/modules');
   }
 
   // Agents
 
+  /**
+   * Create a new agent.
+   */
   async createAgent(options: CreateAgentOptions): Promise<string> {
-    const response = await this.request<{ agent_id: string }>('POST', '/agents', {
+    const payload = {
       instructions: options.instructions,
-      tools: options.tools,
-      provider: options.provider || 'anthropic',
+      provider: options.provider ?? 'anthropic',
       model: options.model,
-      bundle: options.bundle,
-    });
+      tools: options.tools ?? [],
+      orchestrator: options.orchestrator ?? 'basic',
+      context_manager: options.contextManager ?? 'simple',
+      hooks: options.hooks ?? [],
+      config: options.config ?? {},
+    };
+
+    const response = await this.request<{ agent_id: string }>('POST', '/agents', payload);
     return response.agent_id;
   }
 
-  async getAgent(agentId: string): Promise<Record<string, unknown>> {
-    return this.request('GET', `/agents/${agentId}`);
+  /**
+   * Get agent information.
+   */
+  async getAgent(agentId: string): Promise<AgentInfo> {
+    return this.request<AgentInfo>('GET', `/agents/${agentId}`);
   }
 
-  async listAgents(): Promise<{ agents: Record<string, unknown>[] }> {
-    return this.request('GET', '/agents');
+  /**
+   * List all agent IDs.
+   */
+  async listAgents(): Promise<string[]> {
+    const response = await this.request<{ agents: string[] }>('GET', '/agents');
+    return response.agents;
   }
 
+  /**
+   * Delete an agent.
+   */
   async deleteAgent(agentId: string): Promise<void> {
-    await this.request('DELETE', `/agents/${agentId}`);
+    await this.request<{ deleted: boolean }>('DELETE', `/agents/${agentId}`);
   }
 
-  async run(agentId: string, prompt: string): Promise<RunResponse> {
-    return this.request('POST', `/agents/${agentId}/run`, { prompt });
-  }
+  // Execution
 
-  async *stream(agentId: string, prompt: string): AsyncGenerator<StreamEvent> {
-    const response = await fetch(`${this.baseUrl}/agents/${agentId}/stream`, {
-      method: 'POST',
-      headers: {
-        ...this.getHeaders(),
-        Accept: 'text/event-stream',
-      },
-      body: JSON.stringify({ prompt }),
+  /**
+   * Run a prompt and get response.
+   */
+  async run(
+    agentId: string,
+    prompt: string,
+    options: RunOptions = {}
+  ): Promise<RunResponse> {
+    return this.request<RunResponse>('POST', `/agents/${agentId}/run`, {
+      prompt,
+      max_turns: options.maxTurns ?? 10,
     });
+  }
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`HTTP ${response.status}: ${error}`);
-    }
-
-    const reader = response.body?.getReader();
-    if (!reader) {
-      throw new Error('No response body');
-    }
-
-    const decoder = new TextDecoder();
-    let buffer = '';
+  /**
+   * Stream a prompt response.
+   */
+  async *stream(
+    agentId: string,
+    prompt: string,
+    options: RunOptions = {}
+  ): AsyncGenerator<StreamEvent> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
 
     try {
+      const response = await fetch(`${this.baseUrl}/agents/${agentId}/stream`, {
+        method: 'POST',
+        headers: {
+          ...this.getHeaders(),
+          Accept: 'text/event-stream',
+        },
+        body: JSON.stringify({
+          prompt,
+          max_turns: options.maxTurns ?? 10,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`HTTP ${response.status}: ${error}`);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error('No response body');
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let currentEvent = 'message';
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
+        buffer = lines.pop() ?? '';
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const dataStr = line.slice(6).trim();
+          const trimmedLine = line.trim();
+          if (!trimmedLine) continue;
+
+          if (trimmedLine.startsWith('event:')) {
+            currentEvent = trimmedLine.slice(6).trim();
+          } else if (trimmedLine.startsWith('data:')) {
+            const dataStr = trimmedLine.slice(5).trim();
             if (dataStr) {
               try {
                 const data = JSON.parse(dataStr);
-                yield {
-                  event: data.event || 'message',
-                  data,
-                };
+                yield { event: currentEvent, data };
               } catch {
-                // Skip malformed JSON
+                // Skip invalid JSON
               }
             }
           }
         }
       }
     } finally {
-      reader.releaseLock();
+      clearTimeout(timeoutId);
     }
   }
 
-  // Recipes
+  // Messages
 
-  async executeRecipe(options: ExecuteRecipeOptions): Promise<string> {
-    const response = await this.request<{ execution_id: string }>(
-      'POST',
-      '/recipes/execute',
-      {
-        recipe_path: options.recipePath,
-        recipe_yaml: options.recipeYaml,
-        context: options.context,
-      }
+  /**
+   * Get conversation messages for an agent.
+   */
+  async getMessages(agentId: string): Promise<Message[]> {
+    const response = await this.request<{ messages: Message[] }>(
+      'GET',
+      `/agents/${agentId}/messages`
     );
-    return response.execution_id;
+    return response.messages;
   }
 
-  async getRecipeExecution(executionId: string): Promise<RecipeExecution> {
-    return this.request('GET', `/recipes/${executionId}`);
+  /**
+   * Clear conversation messages for an agent.
+   */
+  async clearMessages(agentId: string): Promise<void> {
+    await this.request<{ cleared: boolean }>('DELETE', `/agents/${agentId}/messages`);
   }
 
-  async approveGate(executionId: string, stepId: string): Promise<void> {
-    await this.request('POST', `/recipes/${executionId}/approve`, {
-      step_id: stepId,
-    });
-  }
+  // One-off execution
 
-  async denyGate(executionId: string, stepId: string, reason = ''): Promise<void> {
-    await this.request('POST', `/recipes/${executionId}/deny`, {
-      step_id: stepId,
-      reason,
-    });
+  /**
+   * Run a one-off prompt without persistent agent.
+   */
+  async runOnce(options: RunOnceOptions): Promise<RunResponse> {
+    const payload = {
+      prompt: options.prompt,
+      instructions: options.instructions ?? 'You are a helpful assistant.',
+      provider: options.provider ?? 'anthropic',
+      model: options.model,
+      tools: options.tools ?? [],
+      max_turns: options.maxTurns ?? 10,
+    };
+
+    return this.request<RunResponse>('POST', '/run', payload);
   }
 }

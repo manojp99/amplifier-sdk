@@ -3,12 +3,13 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from amplifier_server.main import app
+from amplifier_server.main import create_app
 
 
 @pytest.fixture
 def client() -> TestClient:
     """Test client."""
+    app = create_app()
     return TestClient(app)
 
 
@@ -27,3 +28,4 @@ class TestHealthEndpoint:
         response = client.get("/health")
         data = response.json()
         assert "version" in data
+        assert data["version"] == "0.1.0"

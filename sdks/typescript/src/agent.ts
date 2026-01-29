@@ -1,147 +1,207 @@
 /**
- * High-level Agent API for Amplifier SDK
+ * High-level Agent interface for Amplifier SDK.
  */
 
 import { AmplifierClient } from './client';
-import type { AgentConfig, ClientOptions, RunResponse, StreamEvent } from './types';
-
-export interface AgentOptions extends AgentConfig, ClientOptions {}
+import type {
+  AgentInfo,
+  CreateAgentOptions,
+  Message,
+  RunOptions,
+  RunResponse,
+  StreamEvent,
+} from './types';
 
 export class Agent {
-  private config: AgentConfig;
   private client: AmplifierClient;
-  private agentId?: string;
+  private _agentId: string;
+  private _options: CreateAgentOptions;
+  private _deleted = false;
 
   /**
-   * Create a new Agent
+   * Create a new Agent instance.
+   *
+   * Note: Use Agent.create() instead of direct construction.
+   */
+  private constructor(
+    client: AmplifierClient,
+    agentId: string,
+    options: CreateAgentOptions
+  ) {
+    this.client = client;
+    this._agentId = agentId;
+    this._options = options;
+  }
+
+  /**
+   * Get the agent ID.
+   */
+  get agentId(): string {
+    return this._agentId;
+  }
+
+  /**
+   * Get the agent's instructions.
+   */
+  get instructions(): string {
+    return this._options.instructions;
+  }
+
+  /**
+   * Get the agent's provider.
+   */
+  get provider(): string {
+    return this._options.provider ?? 'anthropic';
+  }
+
+  /**
+   * Get the agent's model.
+   */
+  get model(): string | undefined {
+    return this._options.model;
+  }
+
+  /**
+   * Get the agent's enabled tools.
+   */
+  get tools(): string[] {
+    return this._options.tools ?? [];
+  }
+
+  /**
+   * Create a new agent.
    *
    * @example
    * ```typescript
-   * // Simple usage
-   * const agent = new Agent({ instructions: 'You help with code.' });
-   * const response = await agent.run('Hello!');
-   * console.log(response.content);
-   *
-   * // With tools
-   * const agent = new Agent({
+   * const client = new AmplifierClient();
+   * const agent = await Agent.create(client, {
    *   instructions: 'You are a coding assistant.',
-   *   tools: ['filesystem', 'bash'],
    *   provider: 'anthropic',
-   *   model: 'claude-sonnet-4-20250514'
+   *   tools: ['bash', 'filesystem']
    * });
    *
-   * // Streaming
-   * for await (const event of agent.stream('Write a poem')) {
-   *   process.stdout.write(event.data.content || '');
+   * try {
+   *   // Run prompt
+   *   const response = await agent.run('Create a Python project');
+   *   console.log(response.content);
+   *
+   *   // Stream response
+   *   for await (const event of agent.stream('Add a README')) {
+   *     if (event.data.text) {
+   *       process.stdout.write(event.data.text as string);
+   *     }
+   *   }
+   *
+   *   // Conversation continues automatically
+   *   const response2 = await agent.run('Now add tests');
+   * } finally {
+   *   await agent.delete();
    * }
-   *
-   * // Multi-turn conversation
-   * await agent.run('Remember my name is Alice');
-   * await agent.run("What's my name?"); // Remembers context
-   *
-   * // Clean up when done
-   * await agent.delete();
    * ```
    */
-  constructor(options: AgentOptions) {
-    this.config = {
-      instructions: options.instructions,
-      tools: options.tools,
-      provider: options.provider || 'anthropic',
-      model: options.model,
-      bundle: options.bundle,
-    };
-    this.client = new AmplifierClient({
-      baseUrl: options.baseUrl,
-      apiKey: options.apiKey,
-      timeout: options.timeout,
-    });
+  static async create(
+    client: AmplifierClient,
+    options: CreateAgentOptions
+  ): Promise<Agent> {
+    const agentId = await client.createAgent(options);
+    return new Agent(client, agentId, options);
   }
 
   /**
-   * Get the agent ID (undefined if not yet created)
+   * Run a prompt and get response.
    */
-  getAgentId(): string | undefined {
-    return this.agentId;
-  }
-
-  private async ensureCreated(): Promise<string> {
-    if (!this.agentId) {
-      this.agentId = await this.client.createAgent({
-        instructions: this.config.instructions,
-        tools: this.config.tools,
-        provider: this.config.provider,
-        model: this.config.model,
-        bundle: this.config.bundle,
-      });
-    }
-    return this.agentId;
+  async run(prompt: string, options: RunOptions = {}): Promise<RunResponse> {
+    this.checkDeleted();
+    return this.client.run(this._agentId, prompt, options);
   }
 
   /**
-   * Run a prompt and get response
-   *
-   * @param prompt - User message
-   * @returns Response with content, tool_calls, and usage
+   * Stream a prompt response.
    */
-  async run(prompt: string): Promise<RunResponse> {
-    const agentId = await this.ensureCreated();
-    return this.client.run(agentId, prompt);
+  async *stream(
+    prompt: string,
+    options: RunOptions = {}
+  ): AsyncGenerator<StreamEvent> {
+    this.checkDeleted();
+    yield* this.client.stream(this._agentId, prompt, options);
   }
 
   /**
-   * Stream a prompt response
-   *
-   * @param prompt - User message
-   * @yields StreamEvent for each token/event
+   * Get current agent information.
    */
-  async *stream(prompt: string): AsyncGenerator<StreamEvent> {
-    const agentId = await this.ensureCreated();
-    yield* this.client.stream(agentId, prompt);
+  async getInfo(): Promise<AgentInfo> {
+    this.checkDeleted();
+    return this.client.getAgent(this._agentId);
   }
 
   /**
-   * Delete the agent from server
+   * Get conversation messages.
+   */
+  async getMessages(): Promise<Message[]> {
+    this.checkDeleted();
+    return this.client.getMessages(this._agentId);
+  }
+
+  /**
+   * Clear conversation history (keeps system message).
+   */
+  async clearMessages(): Promise<void> {
+    this.checkDeleted();
+    await this.client.clearMessages(this._agentId);
+  }
+
+  /**
+   * Delete this agent and cleanup resources.
    */
   async delete(): Promise<void> {
-    if (this.agentId) {
-      await this.client.deleteAgent(this.agentId);
-      this.agentId = undefined;
+    if (!this._deleted) {
+      await this.client.deleteAgent(this._agentId);
+      this._deleted = true;
+    }
+  }
+
+  private checkDeleted(): void {
+    if (this._deleted) {
+      throw new Error(`Agent ${this._agentId} has been deleted`);
     }
   }
 }
 
 /**
- * One-shot prompt execution
+ * Run a one-off prompt without persistent agent.
  *
- * Creates an agent, runs the prompt, and cleans up.
+ * Convenience function for simple use cases.
  *
  * @example
  * ```typescript
- * import { run } from '@anthropic/amplifier-sdk';
+ * import { run } from '@amplifier/sdk';
  *
- * const response = await run('What is 2+2?');
+ * const response = await run({
+ *   prompt: 'What is 2 + 2?',
+ *   provider: 'anthropic'
+ * });
  * console.log(response.content);
  * ```
  */
-export async function run(
-  prompt: string,
-  options: Partial<AgentOptions> = {}
-): Promise<RunResponse> {
-  const agent = new Agent({
-    instructions: options.instructions || 'You are a helpful assistant.',
-    tools: options.tools,
-    provider: options.provider,
-    model: options.model,
-    bundle: options.bundle,
-    baseUrl: options.baseUrl,
-    apiKey: options.apiKey,
-    timeout: options.timeout,
+export async function run(options: {
+  prompt: string;
+  instructions?: string;
+  provider?: string;
+  model?: string;
+  tools?: string[];
+  maxTurns?: number;
+  baseUrl?: string;
+}): Promise<RunResponse> {
+  const client = new AmplifierClient({
+    baseUrl: options.baseUrl ?? 'http://localhost:8000',
   });
 
-  try {
-    return await agent.run(prompt);
-  } finally {
-    await agent.delete();
-  }
+  return client.runOnce({
+    prompt: options.prompt,
+    instructions: options.instructions,
+    provider: options.provider,
+    model: options.model,
+    tools: options.tools,
+    maxTurns: options.maxTurns,
+  });
 }

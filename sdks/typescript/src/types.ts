@@ -4,29 +4,33 @@
 
 export interface AgentConfig {
   instructions: string;
-  tools?: string[];
-  provider?: string;
+  provider: string;
   model?: string;
-  bundle?: string;
+  tools?: string[];
+  orchestrator?: string;
+  context_manager?: string;
+  hooks?: string[];
+  config?: Record<string, unknown>;
 }
 
 export interface ToolCall {
   id: string;
   name: string;
-  arguments: Record<string, unknown>;
-  result?: string;
+  input: Record<string, unknown>;
+  output?: string;
 }
 
 export interface Usage {
   input_tokens: number;
   output_tokens: number;
+  total_tokens: number;
 }
 
 export interface RunResponse {
   content: string;
   tool_calls: ToolCall[];
   usage: Usage;
-  stop_reason?: string;
+  turn_count: number;
 }
 
 export interface StreamEvent {
@@ -34,29 +38,20 @@ export interface StreamEvent {
   data: Record<string, unknown>;
 }
 
-export type RecipeStatus =
-  | 'pending'
-  | 'running'
-  | 'waiting_approval'
-  | 'completed'
-  | 'failed'
-  | 'cancelled';
-
-export interface StepResult {
-  step_id: string;
+export interface AgentInfo {
+  agent_id: string;
+  created_at: string;
   status: string;
-  content?: string;
-  error?: string;
+  instructions?: string;
+  provider?: string;
+  model?: string;
+  tools: string[];
+  message_count: number;
 }
 
-export interface RecipeExecution {
-  execution_id: string;
-  recipe_name: string;
-  status: RecipeStatus;
-  current_step?: string;
-  steps: StepResult[];
-  error?: string;
-  created_at?: string;
+export interface Message {
+  role: string;
+  content: string;
 }
 
 export interface ClientOptions {
@@ -67,14 +62,38 @@ export interface ClientOptions {
 
 export interface CreateAgentOptions {
   instructions: string;
-  tools?: string[];
   provider?: string;
   model?: string;
-  bundle?: string;
+  tools?: string[];
+  orchestrator?: string;
+  contextManager?: string;
+  hooks?: string[];
+  config?: Record<string, unknown>;
 }
 
-export interface ExecuteRecipeOptions {
-  recipePath?: string;
-  recipeYaml?: string;
-  context?: Record<string, unknown>;
+export interface RunOptions {
+  maxTurns?: number;
+}
+
+export interface RunOnceOptions {
+  prompt: string;
+  instructions?: string;
+  provider?: string;
+  model?: string;
+  tools?: string[];
+  maxTurns?: number;
+}
+
+export interface HealthResponse {
+  status: string;
+  version: string;
+  core_version?: string;
+}
+
+export interface ModulesResponse {
+  providers: string[];
+  tools: string[];
+  orchestrators: string[];
+  context_managers: string[];
+  hooks: string[];
 }

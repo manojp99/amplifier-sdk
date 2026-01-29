@@ -1,210 +1,193 @@
-"""Tests for AmplifierClient."""
+"""Tests for Amplifier SDK client."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from amplifier_sdk.client import AmplifierClient
+import pytest
+
+from amplifier_sdk import AgentConfig, AmplifierClient, RunResponse
 
 
-@pytest.fixture
-def client() -> AmplifierClient:
-    """Create test client."""
-    return AmplifierClient(
-        base_url="http://localhost:8080",
-        api_key="test-api-key",
-    )
+class TestAmplifierClient:
+    """Tests for AmplifierClient."""
 
-
-class TestClientInit:
-    """Tests for client initialization."""
-
-    def test_default_base_url(self) -> None:
-        """Default base URL is localhost:8080."""
+    @pytest.mark.asyncio
+    async def test_client_initialization(self) -> None:
+        """Client initializes with default values."""
         client = AmplifierClient()
-        assert client.base_url == "http://localhost:8080"
+        assert client.base_url == "http://localhost:8000"
+        assert client.api_key is None
+        assert client.timeout == 300.0
 
-    def test_custom_base_url(self) -> None:
-        """Custom base URL is used."""
-        client = AmplifierClient(base_url="http://custom:9000")
-        assert client.base_url == "http://custom:9000"
+    @pytest.mark.asyncio
+    async def test_client_custom_url(self) -> None:
+        """Client accepts custom base URL."""
+        client = AmplifierClient(base_url="http://custom:9000/")
+        assert client.base_url == "http://custom:9000"  # Trailing slash removed
 
-    def test_strips_trailing_slash(self) -> None:
-        """Trailing slash is stripped from base URL."""
-        client = AmplifierClient(base_url="http://localhost:8080/")
-        assert client.base_url == "http://localhost:8080"
-
-    def test_api_key_stored(self) -> None:
-        """API key is stored."""
-        client = AmplifierClient(api_key="secret")
-        assert client.api_key == "secret"
-
-
-class TestHeaders:
-    """Tests for request headers."""
-
-    def test_content_type_always_set(self) -> None:
-        """Content-Type header is always set."""
-        client = AmplifierClient()
+    @pytest.mark.asyncio
+    async def test_client_api_key(self) -> None:
+        """Client accepts API key."""
+        client = AmplifierClient(api_key="test-key")
+        assert client.api_key == "test-key"
         headers = client._get_headers()
-        assert headers["Content-Type"] == "application/json"
+        assert headers["Authorization"] == "Bearer test-key"
 
-    def test_auth_header_when_api_key(self) -> None:
-        """Authorization header set when API key provided."""
-        client = AmplifierClient(api_key="secret")
-        headers = client._get_headers()
-        assert headers["Authorization"] == "Bearer secret"
+    @pytest.mark.asyncio
+    async def test_context_manager(self) -> None:
+        """Client works as async context manager."""
+        async with AmplifierClient() as client:
+            assert client is not None
+        # Client should be closed after context
 
-    def test_no_auth_header_without_api_key(self) -> None:
-        """No Authorization header when no API key."""
-        client = AmplifierClient()
-        headers = client._get_headers()
-        assert "Authorization" not in headers
+    @pytest.mark.asyncio
+    async def test_health_check(self) -> None:
+        """Health check returns server status."""
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_response = MagicMock()
+            mock_response.json.return_value = {"status": "ok", "version": "0.1.0"}
+            mock_response.raise_for_status = MagicMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client.is_closed = False
+            mock_client_class.return_value = mock_client
 
-
-@pytest.mark.asyncio
-class TestHealth:
-    """Tests for health endpoint."""
-
-    async def test_health_request(self, client: AmplifierClient) -> None:
-        """Health makes GET request to /health."""
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"status": "ok", "version": "0.1.0"}
-        mock_response.raise_for_status = MagicMock()
-
-        with patch.object(client, "_get_client") as mock_get_client:
-            mock_http_client = AsyncMock()
-            mock_http_client.get = AsyncMock(return_value=mock_response)
-            mock_get_client.return_value = mock_http_client
-
+            client = AmplifierClient()
+            client._client = mock_client
             result = await client.health()
 
-            mock_http_client.get.assert_called_once_with("/health")
             assert result["status"] == "ok"
+            mock_client.get.assert_called_with("/health")
 
+    @pytest.mark.asyncio
+    async def test_create_agent(self) -> None:
+        """Can create an agent."""
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_response = MagicMock()
+            mock_response.json.return_value = {"agent_id": "ag_test123"}
+            mock_response.raise_for_status = MagicMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.is_closed = False
+            mock_client_class.return_value = mock_client
 
-@pytest.mark.asyncio
-class TestCreateAgent:
-    """Tests for create_agent method."""
-
-    async def test_create_agent_minimal(self, client: AmplifierClient) -> None:
-        """Create agent with minimal parameters."""
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"agent_id": "agent-123"}
-        mock_response.raise_for_status = MagicMock()
-
-        with patch.object(client, "_get_client") as mock_get_client:
-            mock_http_client = AsyncMock()
-            mock_http_client.post = AsyncMock(return_value=mock_response)
-            mock_get_client.return_value = mock_http_client
-
-            agent_id = await client.create_agent(instructions="Be helpful.")
-
-            assert agent_id == "agent-123"
-            mock_http_client.post.assert_called_once()
-            call_args = mock_http_client.post.call_args
-            assert call_args[0][0] == "/agents"
-            assert call_args[1]["json"]["instructions"] == "Be helpful."
-
-    async def test_create_agent_with_tools(self, client: AmplifierClient) -> None:
-        """Create agent with tools."""
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"agent_id": "agent-456"}
-        mock_response.raise_for_status = MagicMock()
-
-        with patch.object(client, "_get_client") as mock_get_client:
-            mock_http_client = AsyncMock()
-            mock_http_client.post = AsyncMock(return_value=mock_response)
-            mock_get_client.return_value = mock_http_client
-
-            await client.create_agent(
+            client = AmplifierClient()
+            client._client = mock_client
+            config = AgentConfig(
                 instructions="Be helpful.",
-                tools=["bash", "filesystem"],
+                provider="anthropic",
+                tools=["bash"],
             )
+            agent_id = await client.create_agent(config)
 
-            call_args = mock_http_client.post.call_args
-            assert call_args[1]["json"]["tools"] == ["bash", "filesystem"]
+            assert agent_id == "ag_test123"
+            mock_client.post.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_list_agents(self) -> None:
+        """Can list agents."""
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_response = MagicMock()
+            mock_response.json.return_value = {"agents": ["ag_1", "ag_2"]}
+            mock_response.raise_for_status = MagicMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client.is_closed = False
+            mock_client_class.return_value = mock_client
 
-@pytest.mark.asyncio
-class TestRun:
-    """Tests for run method."""
+            client = AmplifierClient()
+            client._client = mock_client
+            agents = await client.list_agents()
 
-    async def test_run_returns_response(self, client: AmplifierClient) -> None:
-        """Run returns RunResponse."""
-        mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "content": "Hello!",
-            "tool_calls": [],
-            "usage": {"input_tokens": 10, "output_tokens": 5},
-        }
-        mock_response.raise_for_status = MagicMock()
+            assert agents == ["ag_1", "ag_2"]
+            mock_client.get.assert_called_with("/agents")
 
-        with patch.object(client, "_get_client") as mock_get_client:
-            mock_http_client = AsyncMock()
-            mock_http_client.post = AsyncMock(return_value=mock_response)
-            mock_get_client.return_value = mock_http_client
+    @pytest.mark.asyncio
+    async def test_run_prompt(self) -> None:
+        """Can run a prompt."""
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_response = MagicMock()
+            mock_response.json.return_value = {
+                "content": "Hello!",
+                "tool_calls": [],
+                "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+                "turn_count": 1,
+            }
+            mock_response.raise_for_status = MagicMock()
+            mock_client.post = AsyncMock(return_value=mock_response)
+            mock_client.is_closed = False
+            mock_client_class.return_value = mock_client
 
-            result = await client.run("agent-123", "Hi there!")
+            client = AmplifierClient()
+            client._client = mock_client
+            result = await client.run("ag_test", "Hello")
 
+            assert isinstance(result, RunResponse)
             assert result.content == "Hello!"
-            assert result.usage.input_tokens == 10
-            mock_http_client.post.assert_called_once_with(
-                "/agents/agent-123/run",
-                json={"prompt": "Hi there!"},
-            )
+            assert result.turn_count == 1
+
+    @pytest.mark.asyncio
+    async def test_delete_agent(self) -> None:
+        """Can delete an agent."""
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_response = MagicMock()
+            mock_response.json.return_value = {"deleted": True}
+            mock_response.raise_for_status = MagicMock()
+            mock_client.delete = AsyncMock(return_value=mock_response)
+            mock_client.is_closed = False
+            mock_client_class.return_value = mock_client
+
+            client = AmplifierClient()
+            client._client = mock_client
+            await client.delete_agent("ag_test")
+
+            mock_client.delete.assert_called_with("/agents/ag_test")
 
 
-@pytest.mark.asyncio
-class TestDeleteAgent:
-    """Tests for delete_agent method."""
+class TestAgentConfig:
+    """Tests for AgentConfig model."""
 
-    async def test_delete_agent(self, client: AmplifierClient) -> None:
-        """Delete agent makes DELETE request."""
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
+    def test_config_to_dict(self) -> None:
+        """Config converts to dict correctly."""
+        config = AgentConfig(
+            instructions="Be helpful.",
+            provider="anthropic",
+            model="claude-sonnet-4-20250514",
+            tools=["bash"],
+        )
+        data = config.to_dict()
 
-        with patch.object(client, "_get_client") as mock_get_client:
-            mock_http_client = AsyncMock()
-            mock_http_client.delete = AsyncMock(return_value=mock_response)
-            mock_get_client.return_value = mock_http_client
+        assert data["instructions"] == "Be helpful."
+        assert data["provider"] == "anthropic"
+        assert data["model"] == "claude-sonnet-4-20250514"
+        assert data["tools"] == ["bash"]
 
-            await client.delete_agent("agent-123")
+    def test_config_defaults(self) -> None:
+        """Config has correct defaults."""
+        config = AgentConfig(instructions="Test", provider="anthropic")
+        data = config.to_dict()
 
-            mock_http_client.delete.assert_called_once_with("/agents/agent-123")
+        assert data["orchestrator"] == "basic"
+        assert data["context_manager"] == "simple"
+        assert "model" not in data  # None values excluded
 
 
-@pytest.mark.asyncio
-class TestRecipes:
-    """Tests for recipe methods."""
+class TestRunResponse:
+    """Tests for RunResponse model."""
 
-    async def test_execute_recipe(self, client: AmplifierClient) -> None:
-        """Execute recipe returns execution_id."""
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"execution_id": "exec-123"}
-        mock_response.raise_for_status = MagicMock()
+    def test_from_dict(self) -> None:
+        """RunResponse parses from dict."""
+        data = {
+            "content": "Hello!",
+            "tool_calls": [{"id": "tc_1", "name": "bash", "input": {"command": "ls"}}],
+            "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+            "turn_count": 2,
+        }
+        response = RunResponse.from_dict(data)
 
-        with patch.object(client, "_get_client") as mock_get_client:
-            mock_http_client = AsyncMock()
-            mock_http_client.post = AsyncMock(return_value=mock_response)
-            mock_get_client.return_value = mock_http_client
-
-            result = await client.execute_recipe(recipe_yaml="name: test\nsteps: []")
-
-            assert result == "exec-123"
-
-    async def test_approve_gate(self, client: AmplifierClient) -> None:
-        """Approve gate makes POST request."""
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock()
-
-        with patch.object(client, "_get_client") as mock_get_client:
-            mock_http_client = AsyncMock()
-            mock_http_client.post = AsyncMock(return_value=mock_response)
-            mock_get_client.return_value = mock_http_client
-
-            await client.approve_gate("exec-123", "review-gate")
-
-            mock_http_client.post.assert_called_once_with(
-                "/recipes/exec-123/approve",
-                json={"step_id": "review-gate"},
-            )
+        assert response.content == "Hello!"
+        assert len(response.tool_calls) == 1
+        assert response.tool_calls[0].name == "bash"
+        assert response.usage.total_tokens == 15
+        assert response.turn_count == 2

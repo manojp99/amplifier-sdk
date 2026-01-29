@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from amplifier_sdk.models import RecipeExecution, RunResponse, StreamEvent
+from amplifier_sdk.models import AgentConfig, AgentInfo, RunResponse, StreamEvent
 
 
 class AmplifierClient:
@@ -16,34 +16,40 @@ class AmplifierClient:
 
     Example:
         ```python
-        client = AmplifierClient()
+        async with AmplifierClient() as client:
+            # Create agent
+            agent_id = await client.create_agent(
+                AgentConfig(
+                    instructions="You are helpful.",
+                    provider="anthropic",
+                    tools=["bash"]
+                )
+            )
 
-        # Create agent
-        agent_id = await client.create_agent(
-            instructions="You are helpful.",
-            tools=["bash"]
-        )
+            # Run prompt
+            response = await client.run(agent_id, "Hello!")
+            print(response.content)
 
-        # Run prompt
-        response = await client.run(agent_id, "Hello!")
-        print(response.content)
+            # Stream response
+            async for event in client.stream(agent_id, "Write a poem"):
+                if event.text:
+                    print(event.text, end="", flush=True)
 
-        # Stream response
-        async for event in client.stream(agent_id, "Write a poem"):
-            print(event.content, end="")
+            # Cleanup
+            await client.delete_agent(agent_id)
         ```
     """
 
     def __init__(
         self,
-        base_url: str = "http://localhost:8080",
+        base_url: str = "http://localhost:8000",
         api_key: str | None = None,
         timeout: float = 300.0,
     ) -> None:
         """Initialize client.
 
         Args:
-            base_url: Server URL (default: http://localhost:8080)
+            base_url: Server URL (default: http://localhost:8000)
             api_key: API key for authentication (optional)
             timeout: Request timeout in seconds
         """
@@ -85,75 +91,91 @@ class AmplifierClient:
 
     # Health
     async def health(self) -> dict[str, Any]:
-        """Check server health."""
+        """Check server health.
+
+        Returns:
+            Health status dict with version info
+        """
         client = await self._get_client()
         response = await client.get("/health")
         response.raise_for_status()
         return response.json()
 
+    # Modules
+    async def list_modules(self) -> dict[str, list[str]]:
+        """List available modules.
+
+        Returns:
+            Dict mapping category to list of module names
+        """
+        client = await self._get_client()
+        response = await client.get("/modules")
+        response.raise_for_status()
+        return response.json()
+
     # Agents
-    async def create_agent(
-        self,
-        instructions: str,
-        tools: list[str] | None = None,
-        provider: str = "anthropic",
-        model: str | None = None,
-        bundle: str | None = None,
-    ) -> str:
+    async def create_agent(self, config: AgentConfig) -> str:
         """Create a new agent.
 
         Args:
-            instructions: System instructions for the agent
-            tools: List of tools to enable
-            provider: LLM provider (default: anthropic)
-            model: Model name (optional)
-            bundle: Bundle path (optional)
+            config: Agent configuration
 
         Returns:
             Agent ID
         """
         client = await self._get_client()
-        payload: dict[str, Any] = {
-            "instructions": instructions,
-            "provider": provider,
-        }
-        if tools:
-            payload["tools"] = tools
-        if model:
-            payload["model"] = model
-        if bundle:
-            payload["bundle"] = bundle
-
-        response = await client.post("/agents", json=payload)
+        response = await client.post("/agents", json=config.to_dict())
         response.raise_for_status()
         return response.json()["agent_id"]
 
-    async def get_agent(self, agent_id: str) -> dict[str, Any]:
-        """Get agent info."""
+    async def get_agent(self, agent_id: str) -> AgentInfo:
+        """Get agent info.
+
+        Args:
+            agent_id: Agent ID
+
+        Returns:
+            Agent information
+        """
         client = await self._get_client()
         response = await client.get(f"/agents/{agent_id}")
         response.raise_for_status()
-        return response.json()
+        return AgentInfo.from_dict(response.json())
 
-    async def list_agents(self) -> list[dict[str, Any]]:
-        """List all agents."""
+    async def list_agents(self) -> list[str]:
+        """List all agent IDs.
+
+        Returns:
+            List of agent IDs
+        """
         client = await self._get_client()
         response = await client.get("/agents")
         response.raise_for_status()
         return response.json()["agents"]
 
     async def delete_agent(self, agent_id: str) -> None:
-        """Delete an agent."""
+        """Delete an agent.
+
+        Args:
+            agent_id: Agent ID to delete
+        """
         client = await self._get_client()
         response = await client.delete(f"/agents/{agent_id}")
         response.raise_for_status()
 
-    async def run(self, agent_id: str, prompt: str) -> RunResponse:
+    # Execution
+    async def run(
+        self,
+        agent_id: str,
+        prompt: str,
+        max_turns: int = 10,
+    ) -> RunResponse:
         """Run a prompt and get response.
 
         Args:
             agent_id: Agent ID
             prompt: User prompt
+            max_turns: Maximum agent turns
 
         Returns:
             RunResponse with content and tool calls
@@ -161,7 +183,7 @@ class AmplifierClient:
         client = await self._get_client()
         response = await client.post(
             f"/agents/{agent_id}/run",
-            json={"prompt": prompt},
+            json={"prompt": prompt, "max_turns": max_turns},
         )
         response.raise_for_status()
         return RunResponse.from_dict(response.json())
@@ -170,12 +192,14 @@ class AmplifierClient:
         self,
         agent_id: str,
         prompt: str,
+        max_turns: int = 10,
     ) -> AsyncIterator[StreamEvent]:
         """Stream a prompt response.
 
         Args:
             agent_id: Agent ID
             prompt: User prompt
+            max_turns: Maximum agent turns
 
         Yields:
             StreamEvent for each server-sent event
@@ -184,79 +208,86 @@ class AmplifierClient:
         async with client.stream(
             "POST",
             f"/agents/{agent_id}/stream",
-            json={"prompt": prompt},
+            json={"prompt": prompt, "max_turns": max_turns},
             headers={"Accept": "text/event-stream"},
         ) as response:
             response.raise_for_status()
+            event_type = "message"
             async for line in response.aiter_lines():
-                if line.startswith("data: "):
-                    data_str = line[6:]
-                    if data_str.strip():
+                line = line.strip()
+                if not line:
+                    continue
+                if line.startswith("event:"):
+                    event_type = line[6:].strip()
+                elif line.startswith("data:"):
+                    data_str = line[5:].strip()
+                    if data_str:
                         try:
                             data = json.loads(data_str)
-                            yield StreamEvent(
-                                event=data.get("event", "message"),
-                                data=data,
-                            )
+                            yield StreamEvent(event=event_type, data=data)
                         except json.JSONDecodeError:
                             continue
 
-    # Recipes
-    async def execute_recipe(
-        self,
-        recipe_path: str | None = None,
-        recipe_yaml: str | None = None,
-        context: dict[str, Any] | None = None,
-    ) -> str:
-        """Execute a recipe.
+    # Messages
+    async def get_messages(self, agent_id: str) -> list[dict[str, Any]]:
+        """Get conversation messages for an agent.
 
         Args:
-            recipe_path: Path to recipe file
-            recipe_yaml: Inline recipe YAML
-            context: Context variables
+            agent_id: Agent ID
 
         Returns:
-            Execution ID
+            List of messages
         """
         client = await self._get_client()
-        payload: dict[str, Any] = {}
-        if recipe_path:
-            payload["recipe_path"] = recipe_path
-        if recipe_yaml:
-            payload["recipe_yaml"] = recipe_yaml
-        if context:
-            payload["context"] = context
-
-        response = await client.post("/recipes/execute", json=payload)
+        response = await client.get(f"/agents/{agent_id}/messages")
         response.raise_for_status()
-        return response.json()["execution_id"]
+        return response.json()["messages"]
 
-    async def get_recipe_execution(self, execution_id: str) -> RecipeExecution:
-        """Get recipe execution status."""
+    async def clear_messages(self, agent_id: str) -> None:
+        """Clear conversation messages for an agent.
+
+        Args:
+            agent_id: Agent ID
+        """
         client = await self._get_client()
-        response = await client.get(f"/recipes/{execution_id}")
-        response.raise_for_status()
-        return RecipeExecution.from_dict(response.json())
-
-    async def approve_gate(self, execution_id: str, step_id: str) -> None:
-        """Approve a recipe gate."""
-        client = await self._get_client()
-        response = await client.post(
-            f"/recipes/{execution_id}/approve",
-            json={"step_id": step_id},
-        )
+        response = await client.delete(f"/agents/{agent_id}/messages")
         response.raise_for_status()
 
-    async def deny_gate(
+    # One-off execution
+    async def run_once(
         self,
-        execution_id: str,
-        step_id: str,
-        reason: str = "",
-    ) -> None:
-        """Deny a recipe gate."""
+        prompt: str,
+        instructions: str = "You are a helpful assistant.",
+        provider: str = "anthropic",
+        model: str | None = None,
+        tools: list[str] | None = None,
+        max_turns: int = 10,
+    ) -> RunResponse:
+        """Run a one-off prompt without persistent agent.
+
+        Args:
+            prompt: User prompt
+            instructions: System instructions
+            provider: LLM provider
+            model: Model name (optional)
+            tools: List of tools (optional)
+            max_turns: Maximum agent turns
+
+        Returns:
+            RunResponse with content and tool calls
+        """
         client = await self._get_client()
-        response = await client.post(
-            f"/recipes/{execution_id}/deny",
-            json={"step_id": step_id, "reason": reason},
-        )
+        payload: dict[str, Any] = {
+            "prompt": prompt,
+            "instructions": instructions,
+            "provider": provider,
+            "max_turns": max_turns,
+        }
+        if model:
+            payload["model"] = model
+        if tools:
+            payload["tools"] = tools
+
+        response = await client.post("/run", json=payload)
         response.raise_for_status()
+        return RunResponse.from_dict(response.json())

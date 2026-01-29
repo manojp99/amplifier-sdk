@@ -1,462 +1,379 @@
-"""Session manager for handling Amplifier sessions."""
+"""Session manager for Amplifier agents - wraps amplifier-core directly."""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import logging
+import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
+from enum import Enum
 from typing import Any
-from uuid import uuid4
 
-from ..config import get_config
-from ..models import RunResponse, ToolCall, Usage
+from amplifier_server.core.config_translator import translate_to_mount_plan
+from amplifier_server.core.module_resolver import ServerModuleResolver
 
-logger = logging.getLogger(__name__)
 
-# Check if foundation is available
-try:
-    from amplifier_foundation import Bundle, load_bundle
+class AgentStatus(str, Enum):
+    """Status of an agent."""
 
-    FOUNDATION_AVAILABLE = True
-except ImportError:
-    FOUNDATION_AVAILABLE = False
-    Bundle = None
-    load_bundle = None
+    READY = "ready"
+    RUNNING = "running"
+    ERROR = "error"
+    DELETED = "deleted"
 
 
 @dataclass
 class AgentState:
-    """State for a managed agent."""
+    """State of an agent (wraps a Core session)."""
 
     agent_id: str
     created_at: datetime
-    instructions: str
-    tools: list[str]
-    provider: str
-    model: str | None
-    session: Any = None  # AmplifierSession
-    prepared: Any = None  # PreparedBundle for session management
-    message_count: int = 0
-    working_dir: Path | None = None
+    status: AgentStatus = AgentStatus.READY
+    sdk_config: dict[str, Any] = field(default_factory=dict)
+    mount_plan: dict[str, Any] = field(default_factory=dict)
+    session: Any | None = None  # AmplifierSession from core
+    messages: list[dict[str, Any]] = field(default_factory=list)
+    error: str | None = None
+
+    @property
+    def instructions(self) -> str | None:
+        """Get the agent's instructions."""
+        return self.sdk_config.get("instructions")
+
+    @property
+    def provider(self) -> str | None:
+        """Get the agent's provider."""
+        return self.sdk_config.get("provider")
+
+    @property
+    def model(self) -> str | None:
+        """Get the agent's model."""
+        return self.sdk_config.get("model")
+
+    @property
+    def tools(self) -> list[str]:
+        """Get the agent's tools."""
+        return self.sdk_config.get("tools", [])
 
 
 @dataclass
-class SessionManager:
-    """Manages Amplifier sessions for the API.
+class StreamEvent:
+    """An event from streaming execution."""
 
-    This class handles:
-    - Creating and destroying agent sessions
-    - Executing prompts on sessions
-    - Streaming execution events
-    - Session lifecycle management
+    event: str
+    data: dict[str, Any]
+
+
+class SessionManager:
+    """
+    Manages agent sessions using amplifier-core directly.
+
+    This is the core component that:
+    1. Translates SDK config → Core mount plan
+    2. Creates and manages AmplifierSession instances
+    3. Bridges Core events → SSE stream
     """
 
-    _agents: dict[str, AgentState] = field(default_factory=dict)
-    _prepared_bundles: dict[str, Any] = field(default_factory=dict)
-    _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-
-    async def create_agent(
-        self,
-        instructions: str,
-        tools: list[str] | None = None,
-        provider: str | None = None,
-        model: str | None = None,
-        bundle_path: str | None = None,
-        working_dir: str | None = None,
-    ) -> str:
-        """Create a new agent session.
+    def __init__(self, resolver: ServerModuleResolver | None = None):
+        """
+        Initialize the session manager.
 
         Args:
-            instructions: System prompt for the agent
-            tools: List of tool names to enable
-            provider: LLM provider name
-            model: Model name
-            bundle_path: Optional path to bundle file
-            working_dir: Working directory for the session
+            resolver: Module resolver for finding modules. Uses default if not provided.
+        """
+        self.resolver = resolver or ServerModuleResolver()
+        self.agents: dict[str, AgentState] = {}
+        self._lock = asyncio.Lock()
+
+    async def create_agent(self, sdk_config: dict[str, Any]) -> AgentState:
+        """
+        Create a new agent from SDK configuration.
+
+        Args:
+            sdk_config: User-friendly configuration
+                {
+                    "instructions": "You are helpful",
+                    "provider": "anthropic",
+                    "model": "claude-sonnet-4-20250514",
+                    "tools": ["bash", "filesystem"],
+                }
 
         Returns:
-            Agent ID
-
-        Raises:
-            RuntimeError: If session limit reached or creation fails
+            AgentState with the new agent
         """
-        config = get_config()
+        # Generate agent ID
+        agent_id = f"ag_{uuid.uuid4().hex[:12]}"
 
-        async with self._lock:
-            if len(self._agents) >= config.max_sessions:
-                raise RuntimeError(f"Maximum session limit reached ({config.max_sessions})")
+        # Translate to mount plan
+        mount_plan = translate_to_mount_plan(sdk_config)
 
-        agent_id = str(uuid4())
-        provider = provider or config.default_provider
-        model = model or config.default_model
-        work_path = Path(working_dir) if working_dir else Path.cwd()
-
-        # Create session using foundation
-        session, prepared = await self._create_foundation_session(
-            instructions=instructions,
-            tools=tools or [],
-            provider=provider,
-            model=model,
-            bundle_path=bundle_path,
-            working_dir=work_path,
-        )
-
-        state = AgentState(
+        # Create agent state (session created lazily on first run)
+        agent = AgentState(
             agent_id=agent_id,
             created_at=datetime.utcnow(),
-            instructions=instructions,
-            tools=tools or [],
-            provider=provider,
-            model=model,
-            session=session,
-            prepared=prepared,
-            working_dir=work_path,
+            status=AgentStatus.READY,
+            sdk_config=sdk_config,
+            mount_plan=mount_plan,
         )
 
+        # Store agent
         async with self._lock:
-            self._agents[agent_id] = state
+            self.agents[agent_id] = agent
 
-        logger.info(f"Created agent {agent_id} with provider={provider}, model={model}")
-        return agent_id
+        return agent
 
-    async def _create_foundation_session(
-        self,
-        instructions: str,
-        tools: list[str],
-        provider: str,
-        model: str | None,
-        bundle_path: str | None,
-        working_dir: Path,
-    ) -> tuple[Any, Any]:
-        """Create a foundation session.
+    async def get_agent(self, agent_id: str) -> AgentState | None:
+        """Get an agent by ID."""
+        return self.agents.get(agent_id)
+
+    async def list_agents(self) -> list[str]:
+        """List all agent IDs."""
+        return list(self.agents.keys())
+
+    async def delete_agent(self, agent_id: str) -> bool:
+        """
+        Delete an agent and cleanup its session.
 
         Returns:
-            Tuple of (session, prepared_bundle)
+            True if agent was deleted, False if not found
         """
-        if not FOUNDATION_AVAILABLE or load_bundle is None:
-            logger.warning("amplifier-foundation not available, using mock mode")
-            return None, None
+        async with self._lock:
+            agent = self.agents.pop(agent_id, None)
+            if agent is None:
+                return False
 
-        try:
-            if bundle_path:
-                # Load existing bundle
-                bundle = await load_bundle(bundle_path)
-                logger.info(f"Loaded bundle from {bundle_path}")
-            else:
-                # Create inline bundle config
-                bundle = self._create_inline_bundle(
-                    instructions=instructions,
-                    tools=tools,
-                    provider=provider,
-                    model=model,
-                )
-                logger.info("Created inline bundle")
+            # Cleanup session if exists
+            if agent.session is not None:
+                with contextlib.suppress(Exception):
+                    await agent.session.cleanup()
 
-            # Prepare the bundle (downloads modules)
-            prepared = await bundle.prepare()
+            agent.status = AgentStatus.DELETED
+            return True
 
-            # Create session
-            session = await prepared.create_session(session_cwd=working_dir)
-
-            return session, prepared
-
-        except Exception as e:
-            logger.error(f"Failed to create foundation session: {e}")
-            raise RuntimeError(f"Failed to create session: {e}") from e
-
-    def _create_inline_bundle(
+    async def run(
         self,
-        instructions: str,
-        tools: list[str],
-        provider: str,
-        model: str | None,
-    ) -> Any:
-        """Create an inline bundle from configuration."""
-        if not FOUNDATION_AVAILABLE or Bundle is None:
-            return None
-
-        # Map tool names to module sources
-        tool_configs = []
-        for tool in tools:
-            # Normalize tool name (e.g., "filesystem" -> "tool-filesystem")
-            module_name = tool if tool.startswith("tool-") else f"tool-{tool}"
-            tool_configs.append(
-                {
-                    "module": module_name,
-                    "source": f"git+https://github.com/microsoft/amplifier-module-{module_name}@main",
-                }
-            )
-
-        # Create provider config
-        provider_module = provider if provider.startswith("provider-") else f"provider-{provider}"
-        provider_config = {
-            "module": provider_module,
-            "source": f"git+https://github.com/microsoft/amplifier-module-{provider_module}@main",
-            "config": {},
-        }
-        if model:
-            provider_config["config"]["default_model"] = model
-
-        # Build the bundle
-        bundle = Bundle(
-            name="api-agent",
-            version="1.0.0",
-            session={
-                "orchestrator": {
-                    "module": "loop-basic",
-                    "source": "git+https://github.com/microsoft/amplifier-module-loop-basic@main",
-                },
-                "context": {
-                    "module": "context-simple",
-                    "source": "git+https://github.com/microsoft/amplifier-module-context-simple@main",
-                },
-            },
-            providers=[provider_config],
-            tools=tool_configs,
-            instruction=instructions,
-        )
-
-        return bundle
-
-    async def run(self, agent_id: str, prompt: str, max_turns: int = 10) -> RunResponse:
-        """Execute a prompt on an agent.
+        agent_id: str,
+        prompt: str,
+        max_turns: int = 10,
+    ) -> dict[str, Any]:
+        """
+        Run a prompt on an agent (non-streaming).
 
         Args:
-            agent_id: Agent identifier
+            agent_id: The agent ID
             prompt: User prompt
-            max_turns: Maximum turns for agentic loop
+            max_turns: Maximum execution turns
 
         Returns:
-            RunResponse with content and tool calls
-
-        Raises:
-            KeyError: If agent not found
+            Result dict with content, tool_calls, usage, turn_count
         """
-        state = self._get_agent(agent_id)
+        # Collect all events from streaming
+        events = []
+        async for event in self.stream(agent_id, prompt, max_turns):
+            events.append(event)
 
-        if state.session is None:
-            # Mock mode - return placeholder response
-            logger.info(f"Mock mode: executing prompt for agent {agent_id}")
-            return RunResponse(
-                content=f"[Mock] Received prompt: {prompt}",
-                tool_calls=[],
-                usage=Usage(input_tokens=10, output_tokens=20, total_tokens=30),
-            )
+        # Extract final result from events
+        content = ""
+        tool_calls = []
+        usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        turn_count = 1
 
-        # Execute on foundation session
-        logger.info(f"Executing prompt for agent {agent_id}")
-        result = await state.session.execute(prompt)
-        state.message_count += 1
+        for event in events:
+            if event.event == "content_delta":
+                content += event.data.get("text", "")
+            elif event.event == "tool_use":
+                tool_calls.append(event.data)
+            elif event.event == "done":
+                content = event.data.get("content", content)
+                turn_count = event.data.get("turn_count", turn_count)
+            elif event.event == "message_end" and "usage" in event.data:
+                usage = event.data["usage"]
 
-        return self._to_run_response(result)
+        return {
+            "content": content,
+            "tool_calls": tool_calls,
+            "usage": usage,
+            "turn_count": turn_count,
+        }
 
     async def stream(
         self,
         agent_id: str,
         prompt: str,
         max_turns: int = 10,
-    ) -> AsyncIterator[dict[str, Any]]:
-        """Stream execution events for a prompt.
-
-        Uses hooks to capture streaming events from the foundation session.
+    ) -> AsyncIterator[StreamEvent]:
+        """
+        Stream execution of a prompt on an agent.
 
         Args:
-            agent_id: Agent identifier
+            agent_id: The agent ID
             prompt: User prompt
-            max_turns: Maximum turns
+            max_turns: Maximum execution turns
 
         Yields:
-            SSE event dictionaries
+            StreamEvent objects with event type and data
         """
-        state = self._get_agent(agent_id)
-
-        if state.session is None:
-            # Mock mode - yield placeholder events
-            yield {"event": "message_start", "data": {"id": str(uuid4())}}
-            yield {"event": "content_delta", "data": {"text": f"[Mock] {prompt}"}}
-            yield {
-                "event": "message_end",
-                "data": {"usage": {"input_tokens": 10, "output_tokens": 20}},
-            }
+        agent = self.agents.get(agent_id)
+        if agent is None:
+            yield StreamEvent(event="error", data={"message": f"Agent not found: {agent_id}"})
             return
 
-        # Create event queue for streaming
-        event_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+        if agent.status == AgentStatus.DELETED:
+            yield StreamEvent(event="error", data={"message": "Agent has been deleted"})
+            return
 
-        # Register hooks to capture events
-        async def on_content_delta(event: str, data: dict) -> Any:
-            delta = data.get("delta", {})
-            if delta.get("type") == "text_delta":
-                await event_queue.put(
-                    {"event": "content_delta", "data": {"text": delta.get("text", "")}}
-                )
-            # Import here to avoid circular imports
-            from amplifier_core.models import HookResult
+        # Mark as running
+        agent.status = AgentStatus.RUNNING
 
-            return HookResult(action="continue")
-
-        async def on_tool_pre(event: str, data: dict) -> Any:
-            await event_queue.put(
-                {
-                    "event": "tool_use",
-                    "data": {
-                        "tool": data.get("tool_name"),
-                        "input": data.get("tool_input"),
-                    },
-                }
-            )
-            from amplifier_core.models import HookResult
-
-            return HookResult(action="continue")
-
-        async def on_tool_post(event: str, data: dict) -> Any:
-            await event_queue.put(
-                {
-                    "event": "tool_result",
-                    "data": {
-                        "tool": data.get("tool_name"),
-                        "result": str(data.get("tool_result", ""))[:1000],
-                    },
-                }
-            )
-            from amplifier_core.models import HookResult
-
-            return HookResult(action="continue")
-
-        # Register hooks
-        coordinator = state.session.coordinator
-        coordinator.hooks.register("content_block:delta", on_content_delta, priority=100)
-        coordinator.hooks.register("tool:pre", on_tool_pre, priority=100)
-        coordinator.hooks.register("tool:post", on_tool_post, priority=100)
-
-        # Start execution in background
-        async def run_execution():
-            try:
-                await state.session.execute(prompt)
-                state.message_count += 1
-            finally:
-                await event_queue.put(None)  # Signal completion
-
-        task = asyncio.create_task(run_execution())
-
-        # Yield message start
-        yield {"event": "message_start", "data": {"id": str(uuid4())}}
-
-        # Stream events from queue
         try:
-            while True:
-                event = await event_queue.get()
-                if event is None:
-                    break
+            # Initialize session if needed
+            if agent.session is None:
+                await self._initialize_session(agent)
+
+            # Add user message to context
+            agent.messages.append({"role": "user", "content": prompt})
+
+            # Execute with event streaming
+            async for event in self._execute_with_events(agent, prompt, max_turns):
                 yield event
-        finally:
-            # Cleanup
-            if not task.done():
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
 
-        # Yield message end
-        yield {
-            "event": "message_end",
-            "data": {"session_id": state.agent_id},
-        }
+            agent.status = AgentStatus.READY
 
-    async def delete_agent(self, agent_id: str) -> bool:
-        """Delete an agent and cleanup resources.
+        except Exception as e:
+            agent.status = AgentStatus.ERROR
+            agent.error = str(e)
+            yield StreamEvent(event="error", data={"message": str(e)})
 
-        Args:
-            agent_id: Agent identifier
-
-        Returns:
-            True if deleted, False if not found
+    async def _initialize_session(self, agent: AgentState) -> None:
         """
-        async with self._lock:
-            state = self._agents.pop(agent_id, None)
+        Initialize the Core session for an agent.
 
-        if state is None:
+        This is where we would import and use amplifier-core.
+        For now, we use a mock implementation.
+        """
+        # TODO: Replace with actual amplifier-core integration
+        # from amplifier_core import AmplifierSession
+        # agent.session = AmplifierSession(agent.mount_plan)
+        # agent.session.coordinator.mount("module-source-resolver", self.resolver)
+        # await agent.session.initialize()
+
+        # Add system message with instructions
+        if agent.sdk_config.get("instructions"):
+            agent.messages.insert(
+                0, {"role": "system", "content": agent.sdk_config["instructions"]}
+            )
+
+        # Mock session for now
+        agent.session = MockSession(agent)
+
+    async def _execute_with_events(
+        self,
+        agent: AgentState,
+        prompt: str,
+        max_turns: int,
+    ) -> AsyncIterator[StreamEvent]:
+        """Execute prompt and yield events."""
+        # Start message
+        yield StreamEvent(event="message_start", data={"id": f"msg_{uuid.uuid4().hex[:8]}"})
+
+        # TODO: Replace with actual Core execution that streams events
+        # For now, mock the streaming behavior
+
+        if agent.session is None:
+            yield StreamEvent(event="error", data={"message": "Session not initialized"})
+            return
+
+        # Mock execution - in real implementation this would:
+        # 1. Register hook to capture events
+        # 2. Call session.execute(prompt)
+        # 3. Yield events as they come from the hook
+
+        result = await agent.session.execute(prompt)
+
+        # Simulate content streaming
+        content = result.get("content", "")
+        chunk_size = 20
+        for i in range(0, len(content), chunk_size):
+            chunk = content[i : i + chunk_size]
+            yield StreamEvent(event="content_delta", data={"text": chunk})
+            await asyncio.sleep(0.01)  # Simulate streaming delay
+
+        # Tool calls
+        for tool_call in result.get("tool_calls", []):
+            yield StreamEvent(event="tool_use", data=tool_call)
+            yield StreamEvent(
+                event="tool_result",
+                data={"tool": tool_call["name"], "output": tool_call.get("output", "")},
+            )
+
+        # End message
+        yield StreamEvent(
+            event="message_end",
+            data={
+                "usage": result.get("usage", {"input_tokens": 0, "output_tokens": 0}),
+            },
+        )
+
+        # Store assistant response
+        agent.messages.append({"role": "assistant", "content": content})
+
+        # Done
+        yield StreamEvent(
+            event="done",
+            data={
+                "content": content,
+                "turn_count": result.get("turn_count", 1),
+            },
+        )
+
+    async def get_messages(self, agent_id: str) -> list[dict[str, Any]]:
+        """Get conversation messages for an agent."""
+        agent = self.agents.get(agent_id)
+        if agent is None:
+            return []
+        return agent.messages
+
+    async def clear_messages(self, agent_id: str) -> bool:
+        """Clear conversation messages for an agent."""
+        agent = self.agents.get(agent_id)
+        if agent is None:
             return False
 
-        # Cleanup session
-        if state.session is not None:
-            with contextlib.suppress(Exception):
-                # Session cleanup if available
-                if hasattr(state.session, "__aexit__"):
-                    await state.session.__aexit__(None, None, None)
-
-        logger.info(f"Deleted agent {agent_id}")
+        # Keep system message if present
+        system_messages = [m for m in agent.messages if m.get("role") == "system"]
+        agent.messages = system_messages
         return True
-
-    def get_agent(self, agent_id: str) -> AgentState | None:
-        """Get agent state by ID.
-
-        Args:
-            agent_id: Agent identifier
-
-        Returns:
-            AgentState or None if not found
-        """
-        return self._agents.get(agent_id)
-
-    def _get_agent(self, agent_id: str) -> AgentState:
-        """Get agent state, raising if not found."""
-        state = self._agents.get(agent_id)
-        if state is None:
-            raise KeyError(f"Agent not found: {agent_id}")
-        return state
-
-    def list_agents(self) -> list[str]:
-        """List all active agent IDs."""
-        return list(self._agents.keys())
 
     @property
     def active_count(self) -> int:
         """Number of active agents."""
-        return len(self._agents)
-
-    def _to_run_response(self, result: Any) -> RunResponse:
-        """Convert foundation result to RunResponse."""
-        # Handle string result (most common)
-        if isinstance(result, str):
-            return RunResponse(content=result, tool_calls=[], usage=Usage())
-
-        # Extract content, tool calls, and usage from foundation result
-        content = getattr(result, "content", str(result))
-        tool_calls = []
-        usage = Usage()
-
-        if hasattr(result, "tool_calls"):
-            tool_calls = [
-                ToolCall(
-                    id=tc.id,
-                    name=tc.name,
-                    input=tc.input,
-                    output=getattr(tc, "output", None),
-                )
-                for tc in result.tool_calls
-            ]
-
-        if hasattr(result, "usage"):
-            usage = Usage(
-                input_tokens=getattr(result.usage, "input_tokens", 0),
-                output_tokens=getattr(result.usage, "output_tokens", 0),
-                total_tokens=getattr(result.usage, "total_tokens", 0),
-            )
-
-        return RunResponse(content=content, tool_calls=tool_calls, usage=usage)
+        return len(self.agents)
 
 
-# Global session manager instance
-_manager: SessionManager | None = None
+class MockSession:
+    """
+    Mock session for development/testing.
 
+    This will be replaced with actual amplifier-core integration.
+    """
 
-def get_session_manager() -> SessionManager:
-    """Get the global session manager instance."""
-    global _manager
-    if _manager is None:
-        _manager = SessionManager()
-    return _manager
+    def __init__(self, agent: AgentState):
+        self.agent = agent
+
+    async def execute(self, prompt: str) -> dict[str, Any]:
+        """Mock execution that returns a simple response."""
+        # In real implementation, this calls the orchestrator
+        return {
+            "content": f"I received your message: '{prompt}'. "
+            f"I'm an agent with provider '{self.agent.provider}' "
+            f"and tools {self.agent.tools}.",
+            "tool_calls": [],
+            "usage": {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150},
+            "turn_count": 1,
+        }
+
+    async def cleanup(self) -> None:
+        """Cleanup resources."""
+        pass

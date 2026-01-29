@@ -1,72 +1,104 @@
-"""Response models for the API."""
+"""Response models for the Amplifier Server API."""
 
 from __future__ import annotations
+
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 
-class ToolCall(BaseModel):
-    """A tool call made during execution."""
-
-    id: str = Field(..., description="Unique tool call ID")
-    name: str = Field(..., description="Tool name")
-    input: dict = Field(default_factory=dict, description="Tool input parameters")
-    output: str | None = Field(None, description="Tool output (if completed)")
-
-
 class Usage(BaseModel):
-    """Token usage statistics."""
+    """Token usage information."""
 
-    input_tokens: int = Field(default=0, description="Input tokens used")
-    output_tokens: int = Field(default=0, description="Output tokens generated")
-    total_tokens: int = Field(default=0, description="Total tokens")
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+
+
+class ToolCall(BaseModel):
+    """A tool call made by the agent."""
+
+    id: str
+    name: str
+    input: dict[str, Any]
+    output: str | None = None
 
 
 class AgentResponse(BaseModel):
-    """Response when creating an agent."""
+    """Response after creating or getting an agent."""
 
-    agent_id: str = Field(..., description="Unique agent identifier")
-    created_at: str = Field(..., description="Creation timestamp (ISO 8601)")
+    agent_id: str
+    created_at: str
+    status: str = "ready"
+    instructions: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    tools: list[str] = Field(default_factory=list)
+    message_count: int = 0
+
+
+class AgentListResponse(BaseModel):
+    """Response for listing agents."""
+
+    agents: list[str]
+    count: int
 
 
 class RunResponse(BaseModel):
     """Response from running a prompt."""
 
-    content: str = Field(..., description="Response content")
-    tool_calls: list[ToolCall] = Field(default_factory=list, description="Tool calls made")
-    usage: Usage = Field(default_factory=lambda: Usage(), description="Token usage")
+    content: str
+    tool_calls: list[ToolCall] = Field(default_factory=list)
+    usage: Usage = Field(default_factory=Usage)
+    turn_count: int = 1
+
+
+class StreamEvent(BaseModel):
+    """A streaming event."""
+
+    event: Literal[
+        "message_start",
+        "content_delta",
+        "tool_use",
+        "tool_result",
+        "message_end",
+        "error",
+        "done",
+    ]
+    data: dict[str, Any]
 
 
 class HealthResponse(BaseModel):
     """Health check response."""
 
-    status: str = Field("ok", description="Server status")
-    version: str = Field(..., description="Server version")
-    active_sessions: int = Field(0, description="Number of active sessions")
+    status: str = "ok"
+    version: str
+    core_version: str | None = None
 
 
-class ErrorResponse(BaseModel):
-    """Error response."""
+class ModulesResponse(BaseModel):
+    """Available modules response."""
 
-    error: str = Field(..., description="Error type")
-    message: str = Field(..., description="Error message")
-    details: dict | None = Field(None, description="Additional error details")
-
-
-class RecipeStepResult(BaseModel):
-    """Result of a recipe step."""
-
-    step_id: str = Field(..., description="Step identifier")
-    status: str = Field(..., description="Step status")
-    content: str | None = Field(None, description="Step output content")
-    error: str | None = Field(None, description="Error message if failed")
+    providers: list[str]
+    tools: list[str]
+    orchestrators: list[str]
+    context_managers: list[str]
+    hooks: list[str]
 
 
-class RecipeExecutionResponse(BaseModel):
-    """Response for recipe execution."""
+class DeleteResponse(BaseModel):
+    """Response for delete operations."""
 
-    execution_id: str = Field(..., description="Unique execution identifier")
-    status: str = Field(..., description="Execution status")
-    current_step: str | None = Field(None, description="Currently executing step")
-    steps: list[RecipeStepResult] = Field(default_factory=list, description="Step results")
-    error: str | None = Field(None, description="Error message if failed")
+    deleted: bool
+
+
+class MessagesResponse(BaseModel):
+    """Response for getting conversation messages."""
+
+    messages: list[dict[str, Any]]
+
+
+class ClearResponse(BaseModel):
+    """Response for clearing conversation."""
+
+    cleared: bool

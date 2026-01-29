@@ -1,37 +1,51 @@
 /**
- * Amplifier SDK - TypeScript client for Amplifier AI agents
+ * Amplifier SDK - TypeScript client for Amplifier AI agents.
  *
  * @example
  * ```typescript
- * import { Agent, run } from '@anthropic/amplifier-sdk';
+ * import { AmplifierClient, Agent, run } from '@amplifier/sdk';
  *
- * // High-level API
- * const agent = new Agent({ instructions: 'You help with code.' });
- * const response = await agent.run('Hello!');
+ * // Option 1: Use client directly
+ * const client = new AmplifierClient();
+ * const agentId = await client.createAgent({
+ *   instructions: 'You are helpful.',
+ *   provider: 'anthropic',
+ *   tools: ['bash']
+ * });
+ * const response = await client.run(agentId, 'Hello!');
  * console.log(response.content);
  *
- * // One-shot
- * const response = await run('What is 2+2?');
+ * // Option 2: Use Agent class for higher-level interface
+ * const agent = await Agent.create(client, {
+ *   instructions: 'You are a coding assistant.',
+ *   provider: 'anthropic',
+ *   tools: ['bash', 'filesystem']
+ * });
+ * const response = await agent.run('Create a Python project');
+ * await agent.delete();
  *
- * // Streaming
- * for await (const event of agent.stream('Write a poem')) {
- *   process.stdout.write(event.data.content || '');
- * }
+ * // Option 3: One-off execution
+ * const result = await run({
+ *   prompt: 'What is 2 + 2?',
+ *   provider: 'anthropic'
+ * });
+ * console.log(result.content);
  * ```
  */
 
 export { AmplifierClient } from './client';
 export { Agent, run } from './agent';
-export type { AgentOptions } from './agent';
 export type {
   AgentConfig,
+  AgentInfo,
   ClientOptions,
   CreateAgentOptions,
-  ExecuteRecipeOptions,
-  RecipeExecution,
-  RecipeStatus,
+  HealthResponse,
+  Message,
+  ModulesResponse,
+  RunOnceOptions,
+  RunOptions,
   RunResponse,
-  StepResult,
   StreamEvent,
   ToolCall,
   Usage,
