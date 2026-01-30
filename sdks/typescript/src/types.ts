@@ -1,231 +1,387 @@
 /**
- * Type definitions for Amplifier SDK
+ * Type definitions for Amplifier SDK.
  */
 
 // =============================================================================
-// Configuration Types
+// Error Types
 // =============================================================================
 
-export interface ProviderConfig {
-  module: string;
-  priority?: number;
-  model?: string;
-  config?: Record<string, unknown>;
+/**
+ * Error codes for structured error handling.
+ */
+export enum ErrorCode {
+  // Network errors
+  NetworkError = "NETWORK_ERROR",
+  Timeout = "TIMEOUT",
+  ConnectionRefused = "CONNECTION_REFUSED",
+
+  // HTTP errors
+  BadRequest = "BAD_REQUEST",
+  Unauthorized = "UNAUTHORIZED",
+  Forbidden = "FORBIDDEN",
+  NotFound = "NOT_FOUND",
+  ServerError = "SERVER_ERROR",
+
+  // Session errors
+  SessionNotFound = "SESSION_NOT_FOUND",
+  SessionExpired = "SESSION_EXPIRED",
+  SessionBusy = "SESSION_BUSY",
+
+  // Streaming errors
+  StreamError = "STREAM_ERROR",
+  StreamAborted = "STREAM_ABORTED",
+
+  // General
+  Unknown = "UNKNOWN",
 }
 
-export interface ToolConfig {
-  module: string;
-  config?: Record<string, unknown>;
-}
+/**
+ * Structured error with code, status, and request context.
+ */
+export class AmplifierError extends Error {
+  /** Error code for programmatic handling */
+  readonly code: ErrorCode;
+  /** HTTP status code (if applicable) */
+  readonly status?: number;
+  /** Request ID for correlation/debugging */
+  readonly requestId?: string;
+  /** Original error (if wrapped) */
+  readonly cause?: Error;
 
-export interface HookConfig {
-  module: string;
-  config?: Record<string, unknown>;
-}
+  constructor(
+    message: string,
+    code: ErrorCode,
+    options?: {
+      status?: number;
+      requestId?: string;
+      cause?: Error;
+    }
+  ) {
+    super(message);
+    this.name = "AmplifierError";
+    this.code = code;
+    this.status = options?.status;
+    this.requestId = options?.requestId;
+    this.cause = options?.cause;
+  }
 
-export interface ApprovalConfig {
-  require_approval?: string[];
-  auto_approve?: string[];
-  timeout?: number;
-}
-
-export interface SubAgentConfig {
-  instructions: string;
-  provider?: string;
-  model?: string;
-  tools?: (string | ToolConfig)[];
-  config?: Record<string, unknown>;
-}
-
-export interface AgentConfig {
-  instructions: string;
-  provider?: string;
-  providers?: ProviderConfig[];
-  model?: string;
-  tools?: (string | ToolConfig)[];
-  orchestrator?: string;
-  context_manager?: string;
-  hooks?: (string | HookConfig)[];
-  approval?: ApprovalConfig;
-  agents?: Record<string, SubAgentConfig>;
-  config?: Record<string, unknown>;
+  /** Check if error is retryable */
+  get isRetryable(): boolean {
+    return [
+      ErrorCode.NetworkError,
+      ErrorCode.Timeout,
+      ErrorCode.ServerError,
+    ].includes(this.code);
+  }
 }
 
 // =============================================================================
-// Response Types
+// Connection State
 // =============================================================================
 
-export interface ToolCall {
-  id: string;
-  name: string;
-  input: Record<string, unknown>;
-  output?: string;
+/**
+ * Connection state for observability.
+ */
+export enum ConnectionState {
+  Disconnected = "disconnected",
+  Connecting = "connecting",
+  Connected = "connected",
+  Reconnecting = "reconnecting",
+  Error = "error",
 }
 
-export interface Usage {
-  input_tokens: number;
-  output_tokens: number;
-  total_tokens: number;
+// =============================================================================
+// Observability Types
+// =============================================================================
+
+/**
+ * Request information for observability hooks.
+ */
+export interface RequestInfo {
+  /** Unique request ID */
+  requestId: string;
+  /** HTTP method */
+  method: string;
+  /** Request URL */
+  url: string;
+  /** Request headers (sensitive values redacted) */
+  headers?: Record<string, string>;
+  /** Request body (if JSON) */
+  body?: unknown;
+  /** Timestamp when request was initiated */
+  timestamp: Date;
 }
 
-export interface RunResponse {
-  content: string;
-  tool_calls: ToolCall[];
-  usage: Usage;
-  turn_count: number;
-  sub_agents_spawned?: string[];
+/**
+ * Response information for observability hooks.
+ */
+export interface ResponseInfo {
+  /** Request ID for correlation */
+  requestId: string;
+  /** HTTP status code */
+  status: number;
+  /** Response headers */
+  headers?: Record<string, string>;
+  /** Response body (if JSON) */
+  body?: unknown;
+  /** Duration in milliseconds */
+  durationMs: number;
+  /** Timestamp when response was received */
+  timestamp: Date;
 }
 
-export interface StreamEvent {
-  event: string;
+/**
+ * State change information for observability.
+ */
+export interface StateChangeInfo {
+  /** Previous state */
+  from: ConnectionState;
+  /** New state */
+  to: ConnectionState;
+  /** Reason for change (if applicable) */
+  reason?: string;
+  /** Timestamp of change */
+  timestamp: Date;
+}
+
+// =============================================================================
+// Event Types
+// =============================================================================
+
+/**
+ * Event types emitted during streaming.
+ */
+export enum EventType {
+  ContentDelta = "content.delta",
+  ContentEnd = "content.end",
+  ThinkingDelta = "thinking.delta",
+  ToolCall = "tool.call",
+  ToolResult = "tool.result",
+  ApprovalRequired = "approval.required",
+  AgentSpawned = "agent.spawned",
+  AgentCompleted = "agent.completed",
+  Error = "error",
+}
+
+/**
+ * SSE event from the server.
+ */
+export interface Event {
+  type: string;
   data: Record<string, unknown>;
+  id?: string;
+  correlationId?: string;
+  sequence?: number;
+  final?: boolean;
+  timestamp?: string;
 }
 
-export interface AgentInfo {
-  agent_id: string;
-  created_at: string;
-  status: string;
-  instructions?: string;
-  provider?: string;
-  model?: string;
-  tools: string[];
-  orchestrator?: string;
-  context_manager?: string;
-  hooks?: string[];
-  agents?: string[];
-  message_count: number;
-  has_approval_config?: boolean;
-}
-
-export interface SubAgentInfo {
-  agent_id: string;
-  parent_id: string;
-  agent_name: string;
-  created_at: string;
-}
-
-export interface ApprovalInfo {
-  approval_id: string;
-  agent_id: string;
-  tool: string;
-  action: string;
-  args: Record<string, unknown>;
-  created_at: string;
-  timeout_at: string;
-}
-
-export interface Message {
-  role: string;
-  content: string;
-}
-
-// =============================================================================
-// Recipe Types
-// =============================================================================
-
-export interface RecipeStep {
-  id: string;
-  agent: string;
-  prompt: string;
-  condition?: string;
-  requires_approval?: boolean;
-}
-
-export interface RecipeConfig {
-  name: string;
-  steps: RecipeStep[];
-  agents?: Record<string, SubAgentConfig>;
-  description?: string;
-}
-
-export interface RecipeStepResult {
-  step_id: string;
-  agent: string;
-  status: string;
-  content?: string;
-  error?: string;
-  started_at?: string;
-  completed_at?: string;
-}
-
-export interface RecipeExecution {
-  execution_id: string;
-  recipe_name: string;
-  status: string;
-  current_step?: string;
-  steps: RecipeStepResult[];
-  input: Record<string, unknown>;
-  output: Record<string, unknown>;
-  error?: string;
-  created_at: string;
-  updated_at: string;
-}
-
-// =============================================================================
-// Client Options
-// =============================================================================
-
-export interface ClientOptions {
-  baseUrl?: string;
-  apiKey?: string;
-  timeout?: number;
-}
-
-export interface CreateAgentOptions {
-  instructions: string;
-  provider?: string;
-  providers?: ProviderConfig[];
-  model?: string;
-  tools?: (string | ToolConfig)[];
-  orchestrator?: string;
-  contextManager?: string;
-  hooks?: (string | HookConfig)[];
-  approval?: ApprovalConfig;
-  agents?: Record<string, SubAgentConfig>;
+/**
+ * Module definition for providers, tools, hooks.
+ */
+export interface ModuleConfig {
+  /** Module name (e.g., "provider-anthropic", "tool-filesystem") */
+  module: string;
+  /** Optional source URL for the module */
+  source?: string;
+  /** Module-specific configuration */
   config?: Record<string, unknown>;
 }
 
-export interface RunOptions {
-  maxTurns?: number;
-  streamEvents?: string[];
-}
-
-export interface SpawnOptions {
-  agentName: string;
-  prompt?: string;
-  inheritContext?: 'none' | 'recent' | 'all';
-  inheritContextTurns?: number;
-}
-
-export interface RunOnceOptions {
-  prompt: string;
+/**
+ * Agent definition within a bundle.
+ */
+export interface AgentConfig {
+  /** Agent name */
+  name: string;
+  /** Agent description */
+  description?: string;
+  /** System instructions for this agent */
   instructions?: string;
-  provider?: string;
-  model?: string;
+  /** Tools available to this agent */
   tools?: string[];
-  maxTurns?: number;
 }
 
-export interface ExecuteRecipeOptions {
-  recipe?: RecipeConfig;
-  recipePath?: string;
-  input?: Record<string, unknown>;
+/**
+ * Bundle definition for runtime bundle creation.
+ * 
+ * This allows you to define a complete bundle configuration
+ * programmatically instead of referencing a pre-existing bundle by name.
+ */
+export interface BundleDefinition {
+  /** Bundle name */
+  name: string;
+  /** Bundle version (default: "1.0.0") */
+  version?: string;
+  /** Bundle description */
+  description?: string;
+  
+  /** Provider modules to load */
+  providers?: ModuleConfig[];
+  /** Tool modules to load */
+  tools?: ModuleConfig[];
+  /** Hook modules to load */
+  hooks?: ModuleConfig[];
+  /** Orchestrator module */
+  orchestrator?: ModuleConfig;
+  /** Context module */
+  context?: ModuleConfig;
+  
+  /** Agent definitions */
+  agents?: AgentConfig[];
+  
+  /** System instructions (injected into all prompts) */
+  instructions?: string;
+  
+  /** Session configuration */
+  session?: {
+    debug?: boolean;
+    maxTurns?: number;
+    [key: string]: unknown;
+  };
+  
+  /** Other bundles to compose/inherit from */
+  includes?: string[];
 }
 
-// =============================================================================
-// Server Responses
-// =============================================================================
+/**
+ * Session configuration - supports both named bundles and runtime definitions.
+ */
+export interface SessionConfig {
+  /** 
+   * Bundle to use - either a name (string) or a full definition (object).
+   * 
+   * @example Using a named bundle:
+   * ```typescript
+   * { bundle: "foundation" }
+   * ```
+   * 
+   * @example Using a runtime bundle definition:
+   * ```typescript
+   * { 
+   *   bundle: {
+   *     name: "my-agent",
+   *     providers: [{ module: "provider-anthropic" }],
+   *     tools: [{ module: "tool-filesystem" }],
+   *     instructions: "You are a coding assistant."
+   *   }
+   * }
+   * ```
+   */
+  bundle?: string | BundleDefinition;
+  
+  /** Override the provider (by name) */
+  provider?: string;
+  /** Override the model */
+  model?: string;
+  /** Working directory for the session */
+  workingDirectory?: string;
+  /** Additional behaviors to compose */
+  behaviors?: string[];
+}
 
-export interface HealthResponse {
-  status: string;
+/**
+ * Session information returned after creation.
+ */
+export interface SessionInfo {
+  id: string;
+  title?: string;
+  state?: string;
+  bundle?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/**
+ * Tool call information.
+ */
+export interface ToolCall {
+  toolName: string;
+  toolCallId: string;
+  arguments: Record<string, unknown>;
+  output?: unknown;
+}
+
+/**
+ * Response from synchronous prompt.
+ */
+export interface PromptResponse {
+  content: string;
+  toolCalls: ToolCall[];
+  sessionId?: string;
+  stopReason?: string;
+}
+
+/**
+ * Approval request from the agent.
+ */
+export interface ApprovalRequest {
+  requestId: string;
+  prompt: string;
+  options: string[];
+  toolName?: string;
+  arguments?: Record<string, unknown>;
+}
+
+/**
+ * Server capabilities.
+ */
+export interface Capabilities {
   version: string;
-  core_version?: string;
+  streaming: boolean;
+  tools: string[];
+  providers: string[];
+  features: string[];
 }
 
-export interface ModulesResponse {
-  providers: string[];
-  tools: string[];
-  orchestrators: string[];
-  context_managers: string[];
-  hooks: string[];
+/**
+ * Client configuration.
+ */
+export interface ClientConfig {
+  /** Server base URL (default: http://localhost:4096) */
+  baseUrl?: string;
+  /** Request timeout in milliseconds (default: 300000) */
+  timeout?: number;
+  /** Default bundle for new sessions */
+  defaultBundle?: string | BundleDefinition;
+
+  // ===========================================================================
+  // Observability Hooks
+  // ===========================================================================
+
+  /**
+   * Called before each HTTP request.
+   * Use for logging, tracing, or request modification.
+   */
+  onRequest?: (info: RequestInfo) => void;
+
+  /**
+   * Called after each HTTP response.
+   * Use for logging, metrics, or response inspection.
+   */
+  onResponse?: (info: ResponseInfo) => void;
+
+  /**
+   * Called when an error occurs.
+   * Use for error tracking, alerting, or recovery logic.
+   */
+  onError?: (error: AmplifierError) => void;
+
+  /**
+   * Called when connection state changes.
+   * Use for UI updates or reconnection logic.
+   */
+  onStateChange?: (info: StateChangeInfo) => void;
+
+  /**
+   * Called for each streaming event.
+   * Use for event logging or debugging.
+   */
+  onEvent?: (event: Event) => void;
+
+  /**
+   * Enable debug mode for verbose console logging.
+   * @default false
+   */
+  debug?: boolean;
 }

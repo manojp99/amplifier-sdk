@@ -1,193 +1,165 @@
-"""Tests for Amplifier SDK client."""
+"""Tests for AmplifierClient."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from __future__ import annotations
+
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from amplifier_sdk import AgentConfig, AmplifierClient, RunResponse
+from amplifier_sdk import AmplifierClient, Event, PromptResponse, SessionInfo
 
 
 class TestAmplifierClient:
-    """Tests for AmplifierClient."""
+    """Test cases for AmplifierClient."""
+
+    @pytest.fixture
+    def client(self) -> AmplifierClient:
+        """Create a test client."""
+        return AmplifierClient(base_url="http://localhost:4096")
 
     @pytest.mark.asyncio
-    async def test_client_initialization(self) -> None:
-        """Client initializes with default values."""
-        client = AmplifierClient()
-        assert client.base_url == "http://localhost:8000"
-        assert client.api_key is None
-        assert client.timeout == 300.0
-
-    @pytest.mark.asyncio
-    async def test_client_custom_url(self) -> None:
-        """Client accepts custom base URL."""
-        client = AmplifierClient(base_url="http://custom:9000/")
-        assert client.base_url == "http://custom:9000"  # Trailing slash removed
-
-    @pytest.mark.asyncio
-    async def test_client_api_key(self) -> None:
-        """Client accepts API key."""
-        client = AmplifierClient(api_key="test-key")
-        assert client.api_key == "test-key"
-        headers = client._get_headers()
-        assert headers["Authorization"] == "Bearer test-key"
-
-    @pytest.mark.asyncio
-    async def test_context_manager(self) -> None:
-        """Client works as async context manager."""
-        async with AmplifierClient() as client:
-            assert client is not None
-        # Client should be closed after context
-
-    @pytest.mark.asyncio
-    async def test_health_check(self) -> None:
-        """Health check returns server status."""
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
+    async def test_ping_success(self, client: AmplifierClient) -> None:
+        """Test successful ping."""
+        with patch("httpx.AsyncClient.get") as mock_get:
             mock_response = MagicMock()
-            mock_response.json.return_value = {"status": "ok", "version": "0.1.0"}
-            mock_response.raise_for_status = MagicMock()
-            mock_client.get = AsyncMock(return_value=mock_response)
-            mock_client.is_closed = False
-            mock_client_class.return_value = mock_client
+            mock_response.status_code = 200
+            mock_get.return_value = mock_response
 
-            client = AmplifierClient()
-            client._client = mock_client
-            result = await client.health()
-
-            assert result["status"] == "ok"
-            mock_client.get.assert_called_with("/health")
+            result = await client.ping()
+            assert result is True
 
     @pytest.mark.asyncio
-    async def test_create_agent(self) -> None:
-        """Can create an agent."""
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_response = MagicMock()
-            mock_response.json.return_value = {"agent_id": "ag_test123"}
-            mock_response.raise_for_status = MagicMock()
-            mock_client.post = AsyncMock(return_value=mock_response)
-            mock_client.is_closed = False
-            mock_client_class.return_value = mock_client
+    async def test_ping_failure(self, client: AmplifierClient) -> None:
+        """Test ping failure."""
+        with patch("httpx.AsyncClient.get") as mock_get:
+            mock_get.side_effect = Exception("Connection failed")
 
-            client = AmplifierClient()
-            client._client = mock_client
-            config = AgentConfig(
-                instructions="Be helpful.",
-                provider="anthropic",
-                tools=["bash"],
-            )
-            agent_id = await client.create_agent(config)
-
-            assert agent_id == "ag_test123"
-            mock_client.post.assert_called_once()
+            result = await client.ping()
+            assert result is False
 
     @pytest.mark.asyncio
-    async def test_list_agents(self) -> None:
-        """Can list agents."""
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_response = MagicMock()
-            mock_response.json.return_value = {"agents": ["ag_1", "ag_2"]}
-            mock_response.raise_for_status = MagicMock()
-            mock_client.get = AsyncMock(return_value=mock_response)
-            mock_client.is_closed = False
-            mock_client_class.return_value = mock_client
-
-            client = AmplifierClient()
-            client._client = mock_client
-            agents = await client.list_agents()
-
-            assert agents == ["ag_1", "ag_2"]
-            mock_client.get.assert_called_with("/agents")
-
-    @pytest.mark.asyncio
-    async def test_run_prompt(self) -> None:
-        """Can run a prompt."""
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_response = MagicMock()
-            mock_response.json.return_value = {
-                "content": "Hello!",
-                "tool_calls": [],
-                "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
-                "turn_count": 1,
-            }
-            mock_response.raise_for_status = MagicMock()
-            mock_client.post = AsyncMock(return_value=mock_response)
-            mock_client.is_closed = False
-            mock_client_class.return_value = mock_client
-
-            client = AmplifierClient()
-            client._client = mock_client
-            result = await client.run("ag_test", "Hello")
-
-            assert isinstance(result, RunResponse)
-            assert result.content == "Hello!"
-            assert result.turn_count == 1
-
-    @pytest.mark.asyncio
-    async def test_delete_agent(self) -> None:
-        """Can delete an agent."""
-        with patch("httpx.AsyncClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_response = MagicMock()
-            mock_response.json.return_value = {"deleted": True}
-            mock_response.raise_for_status = MagicMock()
-            mock_client.delete = AsyncMock(return_value=mock_response)
-            mock_client.is_closed = False
-            mock_client_class.return_value = mock_client
-
-            client = AmplifierClient()
-            client._client = mock_client
-            await client.delete_agent("ag_test")
-
-            mock_client.delete.assert_called_with("/agents/ag_test")
-
-
-class TestAgentConfig:
-    """Tests for AgentConfig model."""
-
-    def test_config_to_dict(self) -> None:
-        """Config converts to dict correctly."""
-        config = AgentConfig(
-            instructions="Be helpful.",
-            provider="anthropic",
-            model="claude-sonnet-4-20250514",
-            tools=["bash"],
-        )
-        data = config.to_dict()
-
-        assert data["instructions"] == "Be helpful."
-        assert data["provider"] == "anthropic"
-        assert data["model"] == "claude-sonnet-4-20250514"
-        assert data["tools"] == ["bash"]
-
-    def test_config_defaults(self) -> None:
-        """Config has correct defaults."""
-        config = AgentConfig(instructions="Test", provider="anthropic")
-        data = config.to_dict()
-
-        assert data["orchestrator"] == "basic"
-        assert data["context_manager"] == "simple"
-        assert "model" not in data  # None values excluded
-
-
-class TestRunResponse:
-    """Tests for RunResponse model."""
-
-    def test_from_dict(self) -> None:
-        """RunResponse parses from dict."""
-        data = {
-            "content": "Hello!",
-            "tool_calls": [{"id": "tc_1", "name": "bash", "input": {"command": "ls"}}],
-            "usage": {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
-            "turn_count": 2,
+    async def test_create_session(self, client: AmplifierClient) -> None:
+        """Test session creation."""
+        mock_response_data = {
+            "id": "sess_123",
+            "title": "Test Session",
+            "created_at": "2024-01-01T00:00:00Z",
+            "state": "ready",
         }
-        response = RunResponse.from_dict(data)
 
-        assert response.content == "Hello!"
+        with patch("httpx.AsyncClient.post") as mock_post:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.raise_for_status = MagicMock()
+            mock_response.json.return_value = mock_response_data
+            mock_post.return_value = mock_response
+
+            session = await client.create_session(bundle="foundation")
+
+            assert session.id == "sess_123"
+            assert session.title == "Test Session"
+            assert session.state == "ready"
+
+    @pytest.mark.asyncio
+    async def test_delete_session(self, client: AmplifierClient) -> None:
+        """Test session deletion."""
+        with patch("httpx.AsyncClient.delete") as mock_delete:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_delete.return_value = mock_response
+
+            result = await client.delete_session("sess_123")
+            assert result is True
+
+    @pytest.mark.asyncio
+    async def test_prompt_sync(self, client: AmplifierClient) -> None:
+        """Test synchronous prompt."""
+        mock_response_data = {
+            "content": "Hello! How can I help?",
+            "tool_calls": [],
+            "session_id": "sess_123",
+            "stop_reason": "end_turn",
+        }
+
+        with patch("httpx.AsyncClient.post") as mock_post:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.raise_for_status = MagicMock()
+            mock_response.json.return_value = mock_response_data
+            mock_post.return_value = mock_response
+
+            response = await client.prompt_sync("sess_123", "Hello!")
+
+            assert response.content == "Hello! How can I help?"
+            assert response.session_id == "sess_123"
+            assert response.stop_reason == "end_turn"
+
+
+class TestTypes:
+    """Test cases for type definitions."""
+
+    def test_event_from_dict(self) -> None:
+        """Test Event.from_dict."""
+        data = {
+            "type": "content.delta",
+            "data": {"delta": "Hello"},
+            "id": "evt_123",
+            "correlation_id": "cmd_456",
+            "sequence": 0,
+            "final": False,
+        }
+
+        event = Event.from_dict(data)
+
+        assert event.type == "content.delta"
+        assert event.data == {"delta": "Hello"}
+        assert event.id == "evt_123"
+        assert event.correlation_id == "cmd_456"
+        assert event.sequence == 0
+        assert event.final is False
+
+    def test_event_is_error(self) -> None:
+        """Test Event.is_error."""
+        error_event = Event(type="error", data={"error": "Something failed"})
+        content_event = Event(type="content.delta", data={"delta": "Hi"})
+
+        assert error_event.is_error() is True
+        assert content_event.is_error() is False
+
+    def test_session_info_from_dict(self) -> None:
+        """Test SessionInfo.from_dict."""
+        data = {
+            "id": "sess_123",
+            "title": "Test",
+            "created_at": "2024-01-01T00:00:00Z",
+            "state": "ready",
+        }
+
+        session = SessionInfo.from_dict(data)
+
+        assert session.id == "sess_123"
+        assert session.title == "Test"
+        assert session.state == "ready"
+
+    def test_prompt_response_from_dict(self) -> None:
+        """Test PromptResponse.from_dict."""
+        data = {
+            "content": "The answer is 4",
+            "tool_calls": [
+                {
+                    "tool_name": "calculator",
+                    "tool_call_id": "tc_123",
+                    "arguments": {"expression": "2+2"},
+                    "output": "4",
+                }
+            ],
+            "session_id": "sess_123",
+            "stop_reason": "end_turn",
+        }
+
+        response = PromptResponse.from_dict(data)
+
+        assert response.content == "The answer is 4"
         assert len(response.tool_calls) == 1
-        assert response.tool_calls[0].name == "bash"
-        assert response.usage.total_tokens == 15
-        assert response.turn_count == 2
+        assert response.tool_calls[0].tool_name == "calculator"
+        assert response.tool_calls[0].output == "4"

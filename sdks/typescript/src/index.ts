@@ -1,74 +1,67 @@
 /**
- * Amplifier SDK - TypeScript client for Amplifier AI agents.
+ * Amplifier SDK - TypeScript client for amplifier-app-runtime.
  *
- * @example
+ * @example Basic usage:
  * ```typescript
- * import { AmplifierClient, Agent, run } from '@amplifier/sdk';
+ * import { AmplifierClient } from "amplifier-sdk";
  *
- * // Option 1: Use client directly
  * const client = new AmplifierClient();
- * const agentId = await client.createAgent({
- *   instructions: 'You are helpful.',
- *   provider: 'anthropic',
- *   tools: ['bash']
- * });
- * const response = await client.run(agentId, 'Hello!');
- * console.log(response.content);
  *
- * // Option 2: Use Agent class for higher-level interface
- * const agent = await Agent.create(client, {
- *   instructions: 'You are a coding assistant.',
- *   provider: 'anthropic',
- *   tools: ['bash', 'filesystem']
- * });
- * const response = await agent.run('Create a Python project');
- * await agent.delete();
- *
- * // Option 3: One-off execution
- * const result = await run({
- *   prompt: 'What is 2 + 2?',
- *   provider: 'anthropic'
- * });
- * console.log(result.content);
+ * // Create session and stream response
+ * const session = await client.createSession({ bundle: "foundation" });
+ * for await (const event of client.prompt(session.id, "Hello!")) {
+ *   if (event.type === "content.delta") {
+ *     process.stdout.write(event.data.delta as string);
+ *   }
+ * }
  * ```
+ *
+ * @example With observability hooks:
+ * ```typescript
+ * import { AmplifierClient, ConnectionState } from "amplifier-sdk";
+ *
+ * const client = new AmplifierClient({
+ *   debug: true,
+ *   onRequest: (req) => console.log(`[${req.requestId}] ${req.method} ${req.url}`),
+ *   onResponse: (res) => console.log(`[${res.requestId}] ${res.status} in ${res.durationMs}ms`),
+ *   onError: (err) => console.error(`[${err.code}] ${err.message}`),
+ *   onStateChange: (info) => updateUI(info.to),
+ *   onEvent: (event) => logEvent(event),
+ * });
+ * ```
+ *
+ * @packageDocumentation
  */
 
-export { AmplifierClient } from './client';
-export { Agent, run } from './agent';
+// Client
+export { AmplifierClient, run } from "./client";
+
+// Error handling
+export { AmplifierError, ErrorCode } from "./types";
+
+// Connection state
+export { ConnectionState } from "./types";
+
+// Event types
+export { EventType } from "./types";
+
+// Type definitions
 export type {
-  // Configuration types
-  AgentConfig,
-  ApprovalConfig,
-  HookConfig,
-  ProviderConfig,
-  SubAgentConfig,
-  ToolConfig,
-
-  // Response types
-  AgentInfo,
-  ApprovalInfo,
-  RunResponse,
-  StreamEvent,
-  SubAgentInfo,
+  // Core types
+  ApprovalRequest,
+  Capabilities,
+  ClientConfig,
+  Event,
+  PromptResponse,
+  SessionConfig,
+  SessionInfo,
   ToolCall,
-  Usage,
-
-  // Recipe types
-  RecipeConfig,
-  RecipeExecution,
-  RecipeStep,
-  RecipeStepResult,
-
-  // Client options
-  ClientOptions,
-  CreateAgentOptions,
-  ExecuteRecipeOptions,
-  RunOnceOptions,
-  RunOptions,
-  SpawnOptions,
-
-  // Server responses
-  HealthResponse,
-  Message,
-  ModulesResponse,
-} from './types';
+  // Bundle definition
+  BundleDefinition,
+  ModuleConfig,
+  AgentConfig,
+  // Observability types
+  RequestInfo,
+  ResponseInfo,
+  StateChangeInfo,
+} from "./types";

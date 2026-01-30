@@ -1,4 +1,8 @@
-"""HTTP client for Amplifier server."""
+"""Amplifier SDK Client.
+
+HTTP client for communicating with amplifier-app-runtime server.
+Supports both streaming (SSE) and synchronous request modes.
+"""
 
 from __future__ import annotations
 
@@ -8,109 +12,59 @@ from typing import Any
 
 import httpx
 
-from amplifier_sdk.models import (
-    AgentConfig,
-    AgentInfo,
-    ApprovalInfo,
-    RecipeConfig,
-    RecipeExecution,
-    RunResponse,
-    SpawnConfig,
-    StreamEvent,
-    SubAgentInfo,
+from .types import (
+    Event,
+    PromptResponse,
+    SessionConfig,
+    SessionInfo,
 )
 
 
 class AmplifierClient:
-    """HTTP client for communicating with Amplifier server.
+    """HTTP client for amplifier-app-runtime server.
 
     Example:
         ```python
         async with AmplifierClient() as client:
-            # Create agent with full module wiring
-            agent_id = await client.create_agent(
-                AgentConfig(
-                    instructions="You are helpful.",
-                    provider="anthropic",
-                    model="claude-sonnet-4-20250514",
-                    tools=["bash", "filesystem"],
-                    orchestrator="streaming",
-                    hooks=["logging"],
-                    agents={
-                        "researcher": {
-                            "instructions": "You research topics.",
-                            "tools": ["web_search"]
-                        }
-                    }
-                )
-            )
+            # Create session
+            session = await client.create_session(bundle="foundation")
 
-            # Run prompt
-            response = await client.run(agent_id, "Hello!")
+            # Stream a prompt
+            async for event in client.prompt(session.id, "Hello!"):
+                if event.type == "content.delta":
+                    print(event.data.get("delta", ""), end="")
+
+            # Or use synchronous mode
+            response = await client.prompt_sync(session.id, "What is 2+2?")
             print(response.content)
 
-            # Spawn sub-agent
-            sub_agent_id = await client.spawn_agent(
-                agent_id,
-                agent_name="researcher",
-                prompt="Research Python async"
-            )
-
-            # Stream with rich events
-            async for event in client.stream(agent_id, "Write a poem"):
-                if event.event == "content:delta":
-                    print(event.data.get("text", ""), end="", flush=True)
-                elif event.event == "tool:start":
-                    print(f"\\nUsing tool: {event.data.get('tool')}")
-
-            # Execute recipe
-            execution = await client.execute_recipe(
-                recipe=RecipeConfig(
-                    name="analysis",
-                    steps=[
-                        {"id": "step1", "agent": "analyzer", "prompt": "Analyze this"}
-                    ]
-                ),
-                input={"topic": "AI"}
-            )
-
-            # Cleanup
-            await client.delete_agent(agent_id)
+            # Clean up
+            await client.delete_session(session.id)
         ```
     """
 
     def __init__(
         self,
-        base_url: str = "http://localhost:8000",
-        api_key: str | None = None,
+        base_url: str = "http://localhost:4096",
         timeout: float = 300.0,
     ) -> None:
-        """Initialize client.
+        """Initialize the client.
 
         Args:
-            base_url: Server URL (default: http://localhost:8000)
-            api_key: API key for authentication (optional)
+            base_url: Server URL (default: http://localhost:4096)
             timeout: Request timeout in seconds
         """
         self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
         self.timeout = timeout
         self._client: httpx.AsyncClient | None = None
-
-    def _get_headers(self) -> dict[str, str]:
-        """Get request headers."""
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        return headers
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create HTTP client."""
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
-                headers=self._get_headers(),
                 timeout=self.timeout,
+                headers={"Content-Type": "application/json"},
             )
         return self._client
 
@@ -129,490 +83,337 @@ class AmplifierClient:
         await self.close()
 
     # =========================================================================
-    # Health & Modules
+    # Health & Capabilities
     # =========================================================================
 
-    async def health(self) -> dict[str, Any]:
-        """Check server health.
+    async def ping(self) -> bool:
+        """Check if server is alive.
 
         Returns:
-            Health status dict with version info
+            True if server responds to ping
+        """
+        try:
+            client = await self._get_client()
+            response = await client.get("/v1/ping")
+            return response.status_code == 200
+        except Exception:
+            return False
+
+    async def capabilities(self) -> dict[str, Any]:
+        """Get server capabilities.
+
+        Returns:
+            Server capabilities dictionary
         """
         client = await self._get_client()
-        response = await client.get("/health")
+        response = await client.get("/v1/capabilities")
         response.raise_for_status()
         return response.json()
 
-    async def list_modules(self) -> dict[str, list[str]]:
-        """List available modules.
-
-        Returns:
-            Dict mapping category to list of module names
-        """
-        client = await self._get_client()
-        response = await client.get("/modules")
-        response.raise_for_status()
-        return response.json()
-
     # =========================================================================
-    # Agent CRUD
+    # Session Management
     # =========================================================================
 
-    async def create_agent(self, config: AgentConfig) -> str:
-        """Create a new agent with full module wiring support.
-
-        Args:
-            config: Agent configuration including providers, tools, orchestrator,
-                   context manager, hooks, and sub-agent definitions
-
-        Returns:
-            Agent ID
-        """
-        client = await self._get_client()
-        response = await client.post("/agents", json=config.to_dict())
-        response.raise_for_status()
-        return response.json()["agent_id"]
-
-    async def get_agent(self, agent_id: str) -> AgentInfo:
-        """Get agent info.
-
-        Args:
-            agent_id: Agent ID
-
-        Returns:
-            Agent information including status and available sub-agents
-        """
-        client = await self._get_client()
-        response = await client.get(f"/agents/{agent_id}")
-        response.raise_for_status()
-        return AgentInfo.from_dict(response.json())
-
-    async def list_agents(self) -> list[str]:
-        """List all agent IDs.
-
-        Returns:
-            List of agent IDs
-        """
-        client = await self._get_client()
-        response = await client.get("/agents")
-        response.raise_for_status()
-        return response.json()["agents"]
-
-    async def delete_agent(self, agent_id: str) -> None:
-        """Delete an agent.
-
-        Args:
-            agent_id: Agent ID to delete
-        """
-        client = await self._get_client()
-        response = await client.delete(f"/agents/{agent_id}")
-        response.raise_for_status()
-
-    # =========================================================================
-    # Execution
-    # =========================================================================
-
-    async def run(
+    async def create_session(
         self,
-        agent_id: str,
-        prompt: str,
-        max_turns: int = 10,
-    ) -> RunResponse:
-        """Run a prompt and get response.
+        bundle: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+        working_directory: str | None = None,
+    ) -> SessionInfo:
+        """Create a new session.
 
         Args:
-            agent_id: Agent ID
-            prompt: User prompt
-            max_turns: Maximum agent turns
+            bundle: Bundle name (e.g., "foundation", "amplifier-dev")
+            provider: Provider name (e.g., "anthropic", "openai")
+            model: Model name (e.g., "claude-sonnet-4-20250514")
+            working_directory: Working directory for the session
 
         Returns:
-            RunResponse with content, tool calls, and spawned sub-agents
+            SessionInfo with the new session ID
         """
         client = await self._get_client()
-        response = await client.post(
-            f"/agents/{agent_id}/run",
-            json={"prompt": prompt, "max_turns": max_turns},
+        config = SessionConfig(
+            bundle=bundle,
+            provider=provider,
+            model=model,
+            working_directory=working_directory,
         )
+        response = await client.post("/v1/session", json=config.to_dict())
         response.raise_for_status()
-        return RunResponse.from_dict(response.json())
+        return SessionInfo.from_dict(response.json())
 
-    async def stream(
-        self,
-        agent_id: str,
-        prompt: str,
-        max_turns: int = 10,
-        event_filter: list[str] | None = None,
-    ) -> AsyncIterator[StreamEvent]:
-        """Stream a prompt response with rich event taxonomy.
-
-        Events include:
-        - session:start/end - Session lifecycle
-        - prompt:start/complete - Prompt processing
-        - content:start/delta/complete - Content streaming
-        - tool:start/result - Tool execution
-        - agent:spawn/complete - Sub-agent spawning
-        - approval:requested/responded - Human-in-loop
-        - done - Execution complete
+    async def get_session(self, session_id: str) -> SessionInfo:
+        """Get session information.
 
         Args:
-            agent_id: Agent ID
-            prompt: User prompt
-            max_turns: Maximum agent turns
-            event_filter: Optional list of event types to receive
+            session_id: Session ID
+
+        Returns:
+            SessionInfo
+        """
+        client = await self._get_client()
+        response = await client.get(f"/v1/session/{session_id}")
+        response.raise_for_status()
+        return SessionInfo.from_dict(response.json())
+
+    async def list_sessions(self) -> list[SessionInfo]:
+        """List all sessions.
+
+        Returns:
+            List of SessionInfo
+        """
+        client = await self._get_client()
+        response = await client.get("/v1/session")
+        response.raise_for_status()
+        data = response.json()
+        sessions = data.get("sessions", [])
+        return [SessionInfo.from_dict(s) for s in sessions]
+
+    async def delete_session(self, session_id: str) -> bool:
+        """Delete a session.
+
+        Args:
+            session_id: Session ID to delete
+
+        Returns:
+            True if deleted successfully
+        """
+        client = await self._get_client()
+        response = await client.delete(f"/v1/session/{session_id}")
+        return response.status_code == 200
+
+    # =========================================================================
+    # Prompt Execution
+    # =========================================================================
+
+    async def prompt(
+        self,
+        session_id: str,
+        content: str,
+        stream: bool = True,
+    ) -> AsyncIterator[Event]:
+        """Send a prompt and stream the response.
+
+        This is the primary method for interacting with the agent.
+        Events are streamed as they arrive from the server.
+
+        Args:
+            session_id: Session ID
+            content: Prompt content
+            stream: Whether to stream (default: True)
 
         Yields:
-            StreamEvent for each server-sent event
+            Event objects as they arrive
+
+        Example:
+            ```python
+            async for event in client.prompt(session_id, "Hello!"):
+                if event.type == "content.delta":
+                    print(event.data.get("delta", ""), end="", flush=True)
+                elif event.type == "tool.call":
+                    print(f"\\nCalling tool: {event.data.get('tool_name')}")
+                elif event.type == "content.end":
+                    print()  # Newline at end
+            ```
         """
         client = await self._get_client()
-        payload: dict[str, Any] = {"prompt": prompt, "max_turns": max_turns}
-        if event_filter:
-            payload["stream_events"] = event_filter
 
         async with client.stream(
             "POST",
-            f"/agents/{agent_id}/stream",
-            json=payload,
+            f"/v1/session/{session_id}/prompt",
+            json={"content": content, "stream": stream},
             headers={"Accept": "text/event-stream"},
         ) as response:
             response.raise_for_status()
-            event_type = "message"
+
             async for line in response.aiter_lines():
                 line = line.strip()
                 if not line:
                     continue
-                if line.startswith("event:"):
-                    event_type = line[6:].strip()
-                elif line.startswith("data:"):
+
+                # Parse SSE format: "data: {...}"
+                if line.startswith("data:"):
                     data_str = line[5:].strip()
                     if data_str:
                         try:
                             data = json.loads(data_str)
-                            yield StreamEvent(event=event_type, data=data)
+                            yield Event.from_dict(data)
                         except json.JSONDecodeError:
                             continue
 
-    # =========================================================================
-    # Multi-Agent Orchestration
-    # =========================================================================
-
-    async def spawn_agent(
+    async def prompt_sync(
         self,
-        parent_id: str,
-        agent_name: str,
-        prompt: str | None = None,
-        inherit_context: str = "none",
-        inherit_context_turns: int = 5,
-    ) -> str:
-        """Spawn a sub-agent from a parent agent.
+        session_id: str,
+        content: str,
+    ) -> PromptResponse:
+        """Send a prompt and wait for complete response.
+
+        Use this when you want to wait for the full response
+        instead of streaming events.
 
         Args:
-            parent_id: Parent agent ID
-            agent_name: Name of sub-agent (must be defined in parent's agents config)
-            prompt: Optional initial prompt to run
-            inherit_context: Context inheritance mode (none, recent, all)
-            inherit_context_turns: Number of turns for 'recent' mode
+            session_id: Session ID
+            content: Prompt content
 
         Returns:
-            Sub-agent ID
+            PromptResponse with complete content and tool calls
+
+        Example:
+            ```python
+            response = await client.prompt_sync(session_id, "What is 2+2?")
+            print(response.content)  # "4"
+            ```
         """
         client = await self._get_client()
-        payload = SpawnConfig(
-            agent_name=agent_name,
-            prompt=prompt,
-            inherit_context=inherit_context,
-            inherit_context_turns=inherit_context_turns,
-        ).to_dict()
-
-        response = await client.post(f"/agents/{parent_id}/spawn", json=payload)
+        response = await client.post(
+            f"/v1/session/{session_id}/prompt/sync",
+            json={"content": content},
+        )
         response.raise_for_status()
-        return response.json()["agent_id"]
+        return PromptResponse.from_dict(response.json())
 
-    async def list_sub_agents(self, parent_id: str) -> list[SubAgentInfo]:
-        """List sub-agents spawned by a parent agent.
+    async def cancel(self, session_id: str) -> bool:
+        """Cancel ongoing execution.
 
         Args:
-            parent_id: Parent agent ID
+            session_id: Session ID
 
         Returns:
-            List of sub-agent info
+            True if cancelled successfully
         """
         client = await self._get_client()
-        response = await client.get(f"/agents/{parent_id}/sub-agents")
-        response.raise_for_status()
-        return [SubAgentInfo.from_dict(sa) for sa in response.json()["sub_agents"]]
+        response = await client.post(f"/v1/session/{session_id}/cancel")
+        return response.status_code == 200
 
     # =========================================================================
     # Approval System
     # =========================================================================
 
-    async def list_pending_approvals(self, agent_id: str) -> list[ApprovalInfo]:
-        """List pending approval requests for an agent.
+    async def respond_approval(
+        self,
+        session_id: str,
+        request_id: str,
+        choice: str,
+    ) -> bool:
+        """Respond to an approval request.
+
+        When the agent requires approval (e.g., for dangerous operations),
+        use this to approve or deny the request.
 
         Args:
-            agent_id: Agent ID
+            session_id: Session ID
+            request_id: Approval request ID (from approval.required event)
+            choice: One of the options from the approval request
 
         Returns:
-            List of pending approval requests
-        """
-        client = await self._get_client()
-        response = await client.get(f"/agents/{agent_id}/approvals")
-        response.raise_for_status()
-        return [ApprovalInfo.from_dict(a) for a in response.json()["approvals"]]
-
-    async def approve(
-        self,
-        agent_id: str,
-        approval_id: str,
-        reason: str | None = None,
-    ) -> None:
-        """Approve a pending request.
-
-        Args:
-            agent_id: Agent ID
-            approval_id: Approval request ID
-            reason: Optional reason for approval
+            True if response was accepted
         """
         client = await self._get_client()
         response = await client.post(
-            f"/agents/{agent_id}/approvals/{approval_id}",
-            json={"approved": True, "reason": reason},
+            f"/v1/session/{session_id}/approval",
+            json={"request_id": request_id, "choice": choice},
         )
-        response.raise_for_status()
-
-    async def deny(
-        self,
-        agent_id: str,
-        approval_id: str,
-        reason: str | None = None,
-    ) -> None:
-        """Deny a pending request.
-
-        Args:
-            agent_id: Agent ID
-            approval_id: Approval request ID
-            reason: Optional reason for denial
-        """
-        client = await self._get_client()
-        response = await client.post(
-            f"/agents/{agent_id}/approvals/{approval_id}",
-            json={"approved": False, "reason": reason},
-        )
-        response.raise_for_status()
+        return response.status_code == 200
 
     # =========================================================================
-    # Recipes (Multi-Step Workflows)
+    # Convenience Methods
     # =========================================================================
 
-    async def execute_recipe(
+    async def run(
         self,
-        recipe: RecipeConfig | None = None,
-        recipe_path: str | None = None,
-        input: dict[str, Any] | None = None,
-    ) -> RecipeExecution:
-        """Execute a recipe (multi-step workflow).
+        content: str,
+        bundle: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> PromptResponse:
+        """One-shot execution: create session, run prompt, return response.
+
+        Convenience method for quick interactions that don't need
+        session persistence.
 
         Args:
-            recipe: Recipe configuration (inline)
-            recipe_path: Path to recipe YAML file
-            input: Input variables for the recipe
+            content: Prompt content
+            bundle: Bundle name (optional)
+            provider: Provider name (optional)
+            model: Model name (optional)
 
         Returns:
-            Recipe execution with ID and status
+            PromptResponse with the result
+
+        Example:
+            ```python
+            response = await client.run("What is the capital of France?")
+            print(response.content)
+            ```
         """
-        client = await self._get_client()
-        payload: dict[str, Any] = {"input": input or {}}
-        if recipe:
-            payload["recipe"] = recipe.to_dict()
-        elif recipe_path:
-            payload["recipe_path"] = recipe_path
-        else:
-            raise ValueError("Either recipe or recipe_path is required")
+        session = await self.create_session(
+            bundle=bundle,
+            provider=provider,
+            model=model,
+        )
+        try:
+            return await self.prompt_sync(session.id, content)
+        finally:
+            await self.delete_session(session.id)
 
-        response = await client.post("/recipes", json=payload)
-        response.raise_for_status()
-        return RecipeExecution.from_dict(response.json())
-
-    async def get_recipe_execution(self, execution_id: str) -> RecipeExecution:
-        """Get recipe execution status.
-
-        Args:
-            execution_id: Recipe execution ID
-
-        Returns:
-            Recipe execution with current status
-        """
-        client = await self._get_client()
-        response = await client.get(f"/recipes/{execution_id}")
-        response.raise_for_status()
-        return RecipeExecution.from_dict(response.json())
-
-    async def stream_recipe(
+    async def stream(
         self,
-        execution_id: str,
-    ) -> AsyncIterator[StreamEvent]:
-        """Stream events from a recipe execution.
+        content: str,
+        bundle: str | None = None,
+        provider: str | None = None,
+        model: str | None = None,
+    ) -> AsyncIterator[Event]:
+        """One-shot streaming: create session, stream prompt, cleanup.
 
-        Events include:
-        - recipe:start/complete/failed - Recipe lifecycle
-        - step:start/complete/failed/skipped - Step lifecycle
-        - approval:requested - Approval needed
+        Convenience method for streaming interactions that don't need
+        session persistence.
 
         Args:
-            execution_id: Recipe execution ID
+            content: Prompt content
+            bundle: Bundle name (optional)
+            provider: Provider name (optional)
+            model: Model name (optional)
 
         Yields:
-            StreamEvent for each server-sent event
-        """
-        client = await self._get_client()
-        async with client.stream(
-            "GET",
-            f"/recipes/{execution_id}/stream",
-            headers={"Accept": "text/event-stream"},
-        ) as response:
-            response.raise_for_status()
-            event_type = "message"
-            async for line in response.aiter_lines():
-                line = line.strip()
-                if not line:
-                    continue
-                if line.startswith("event:"):
-                    event_type = line[6:].strip()
-                elif line.startswith("data:"):
-                    data_str = line[5:].strip()
-                    if data_str:
-                        try:
-                            data = json.loads(data_str)
-                            yield StreamEvent(event=event_type, data=data)
-                        except json.JSONDecodeError:
-                            continue
+            Event objects as they arrive
 
-    async def approve_recipe_step(
-        self,
-        execution_id: str,
-        step_id: str,
-        reason: str | None = None,
-    ) -> None:
-        """Approve a recipe step.
-
-        Args:
-            execution_id: Recipe execution ID
-            step_id: Step ID requiring approval
-            reason: Optional reason for approval
+        Example:
+            ```python
+            async for event in client.stream("Tell me a story"):
+                if event.type == "content.delta":
+                    print(event.data.get("delta", ""), end="")
+            ```
         """
-        client = await self._get_client()
-        response = await client.post(
-            f"/recipes/{execution_id}/approvals/{step_id}",
-            json={"approved": True, "reason": reason},
+        session = await self.create_session(
+            bundle=bundle,
+            provider=provider,
+            model=model,
         )
-        response.raise_for_status()
+        try:
+            async for event in self.prompt(session.id, content):
+                yield event
+        finally:
+            await self.delete_session(session.id)
 
-    async def deny_recipe_step(
-        self,
-        execution_id: str,
-        step_id: str,
-        reason: str | None = None,
-    ) -> None:
-        """Deny a recipe step.
 
-        Args:
-            execution_id: Recipe execution ID
-            step_id: Step ID requiring approval
-            reason: Optional reason for denial
-        """
-        client = await self._get_client()
-        response = await client.post(
-            f"/recipes/{execution_id}/approvals/{step_id}",
-            json={"approved": False, "reason": reason},
-        )
-        response.raise_for_status()
+# Convenience function for simple usage
+async def run(
+    content: str,
+    base_url: str = "http://localhost:4096",
+    bundle: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+) -> PromptResponse:
+    """Quick one-shot execution.
 
-    async def list_recipe_executions(self) -> list[RecipeExecution]:
-        """List all recipe executions.
+    Example:
+        ```python
+        from amplifier_sdk import run
 
-        Returns:
-            List of recipe executions
-        """
-        client = await self._get_client()
-        response = await client.get("/recipes")
-        response.raise_for_status()
-        return [RecipeExecution.from_dict(e) for e in response.json()["executions"]]
-
-    async def cancel_recipe(self, execution_id: str) -> None:
-        """Cancel a recipe execution.
-
-        Args:
-            execution_id: Recipe execution ID
-        """
-        client = await self._get_client()
-        response = await client.delete(f"/recipes/{execution_id}")
-        response.raise_for_status()
-
-    # =========================================================================
-    # Messages
-    # =========================================================================
-
-    async def get_messages(self, agent_id: str) -> list[dict[str, Any]]:
-        """Get conversation messages for an agent.
-
-        Args:
-            agent_id: Agent ID
-
-        Returns:
-            List of messages
-        """
-        client = await self._get_client()
-        response = await client.get(f"/agents/{agent_id}/messages")
-        response.raise_for_status()
-        return response.json()["messages"]
-
-    async def clear_messages(self, agent_id: str) -> None:
-        """Clear conversation messages for an agent.
-
-        Args:
-            agent_id: Agent ID
-        """
-        client = await self._get_client()
-        response = await client.delete(f"/agents/{agent_id}/messages")
-        response.raise_for_status()
-
-    # =========================================================================
-    # One-off Execution
-    # =========================================================================
-
-    async def run_once(
-        self,
-        prompt: str,
-        instructions: str = "You are a helpful assistant.",
-        provider: str = "anthropic",
-        model: str | None = None,
-        tools: list[str] | None = None,
-        max_turns: int = 10,
-    ) -> RunResponse:
-        """Run a one-off prompt without persistent agent.
-
-        Args:
-            prompt: User prompt
-            instructions: System instructions
-            provider: LLM provider
-            model: Model name (optional)
-            tools: List of tools (optional)
-            max_turns: Maximum agent turns
-
-        Returns:
-            RunResponse with content and tool calls
-        """
-        client = await self._get_client()
-        payload: dict[str, Any] = {
-            "prompt": prompt,
-            "instructions": instructions,
-            "provider": provider,
-            "max_turns": max_turns,
-        }
-        if model:
-            payload["model"] = model
-        if tools:
-            payload["tools"] = tools
-
-        response = await client.post("/run", json=payload)
-        response.raise_for_status()
-        return RunResponse.from_dict(response.json())
+        response = await run("What is 2+2?")
+        print(response.content)
+        ```
+    """
+    async with AmplifierClient(base_url=base_url) as client:
+        return await client.run(content, bundle=bundle, provider=provider, model=model)

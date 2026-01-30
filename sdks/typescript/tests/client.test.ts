@@ -1,281 +1,205 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { AmplifierClient } from '../src/client';
+/**
+ * Tests for AmplifierClient.
+ */
+
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { AmplifierClient } from "../src/client";
 
 // Mock fetch globally
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-describe('AmplifierClient', () => {
+describe("AmplifierClient", () => {
+  let client: AmplifierClient;
+
   beforeEach(() => {
+    client = new AmplifierClient({ baseUrl: "http://localhost:4096" });
     mockFetch.mockReset();
   });
 
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
+  describe("ping", () => {
+    it("should return true when server responds", async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true });
 
-  describe('initialization', () => {
-    it('uses default base URL', () => {
-      const client = new AmplifierClient();
-      expect(client['baseUrl']).toBe('http://localhost:8000');
-    });
+      const result = await client.ping();
 
-    it('accepts custom base URL', () => {
-      const client = new AmplifierClient({ baseUrl: 'http://custom:9000/' });
-      expect(client['baseUrl']).toBe('http://custom:9000');
-    });
-
-    it('stores API key', () => {
-      const client = new AmplifierClient({ apiKey: 'test-key' });
-      expect(client['apiKey']).toBe('test-key');
-    });
-  });
-
-  describe('health', () => {
-    it('returns server health status', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ status: 'ok', version: '0.1.0' }),
-      });
-
-      const client = new AmplifierClient();
-      const result = await client.health();
-
-      expect(result.status).toBe('ok');
-      expect(result.version).toBe('0.1.0');
+      expect(result).toBe(true);
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:8000/health',
-        expect.objectContaining({ method: 'GET' })
+        "http://localhost:4096/v1/ping",
+        expect.any(Object)
       );
     });
+
+    it("should return false when server fails", async () => {
+      mockFetch.mockRejectedValueOnce(new Error("Connection failed"));
+
+      const result = await client.ping();
+
+      expect(result).toBe(false);
+    });
   });
 
-  describe('createAgent', () => {
-    it('creates agent and returns ID', async () => {
+  describe("createSession", () => {
+    it("should create a session with bundle", async () => {
+      const mockResponse = {
+        id: "sess_123",
+        title: "Test Session",
+        created_at: "2024-01-01T00:00:00Z",
+        state: "ready",
+      };
+
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ agent_id: 'ag_test123' }),
+        json: () => Promise.resolve(mockResponse),
       });
 
-      const client = new AmplifierClient();
-      const agentId = await client.createAgent({
-        instructions: 'Be helpful.',
-        provider: 'anthropic',
-        tools: ['bash'],
-      });
+      const session = await client.createSession({ bundle: "foundation" });
 
-      expect(agentId).toBe('ag_test123');
+      expect(session.id).toBe("sess_123");
+      expect(session.title).toBe("Test Session");
+      expect(session.state).toBe("ready");
       expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:8000/agents',
+        "http://localhost:4096/v1/session",
         expect.objectContaining({
-          method: 'POST',
-          body: expect.stringContaining('Be helpful.'),
+          method: "POST",
+          body: JSON.stringify({ bundle: "foundation" }),
         })
       );
     });
 
-    it('uses default provider', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ agent_id: 'ag_test' }),
-      });
-
-      const client = new AmplifierClient();
-      await client.createAgent({ instructions: 'Test' });
-
-      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(callBody.provider).toBe('anthropic');
-    });
-  });
-
-  describe('listAgents', () => {
-    it('returns list of agent IDs', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ agents: ['ag_1', 'ag_2'] }),
-      });
-
-      const client = new AmplifierClient();
-      const agents = await client.listAgents();
-
-      expect(agents).toEqual(['ag_1', 'ag_2']);
-    });
-  });
-
-  describe('getAgent', () => {
-    it('returns agent info', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          agent_id: 'ag_test',
-          status: 'ready',
-          instructions: 'Be helpful.',
-          provider: 'anthropic',
-          tools: ['bash'],
-          message_count: 0,
-        }),
-      });
-
-      const client = new AmplifierClient();
-      const info = await client.getAgent('ag_test');
-
-      expect(info.agent_id).toBe('ag_test');
-      expect(info.status).toBe('ready');
-      expect(info.tools).toContain('bash');
-    });
-  });
-
-  describe('deleteAgent', () => {
-    it('deletes agent', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ deleted: true }),
-      });
-
-      const client = new AmplifierClient();
-      await client.deleteAgent('ag_test');
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:8000/agents/ag_test',
-        expect.objectContaining({ method: 'DELETE' })
-      );
-    });
-  });
-
-  describe('run', () => {
-    it('runs prompt and returns response', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          content: 'Hello!',
-          tool_calls: [],
-          usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 },
-          turn_count: 1,
-        }),
-      });
-
-      const client = new AmplifierClient();
-      const result = await client.run('ag_test', 'Hello');
-
-      expect(result.content).toBe('Hello!');
-      expect(result.turn_count).toBe(1);
-      expect(result.usage.total_tokens).toBe(15);
-    });
-
-    it('passes max_turns option', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          content: 'Done',
-          tool_calls: [],
-          usage: {},
-          turn_count: 5,
-        }),
-      });
-
-      const client = new AmplifierClient();
-      await client.run('ag_test', 'Work', { maxTurns: 20 });
-
-      const callBody = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(callBody.max_turns).toBe(20);
-    });
-  });
-
-  describe('getMessages', () => {
-    it('returns conversation messages', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          messages: [
-            { role: 'user', content: 'Hello' },
-            { role: 'assistant', content: 'Hi!' },
-          ],
-        }),
-      });
-
-      const client = new AmplifierClient();
-      const messages = await client.getMessages('ag_test');
-
-      expect(messages).toHaveLength(2);
-      expect(messages[0].role).toBe('user');
-    });
-  });
-
-  describe('clearMessages', () => {
-    it('clears agent messages', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ cleared: true }),
-      });
-
-      const client = new AmplifierClient();
-      await client.clearMessages('ag_test');
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:8000/agents/ag_test/messages',
-        expect.objectContaining({ method: 'DELETE' })
-      );
-    });
-  });
-
-  describe('runOnce', () => {
-    it('runs one-off prompt', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          content: 'Answer',
-          tool_calls: [],
-          usage: {},
-          turn_count: 1,
-        }),
-      });
-
-      const client = new AmplifierClient();
-      const result = await client.runOnce({
-        prompt: 'Question?',
-        instructions: 'Be brief.',
-        provider: 'anthropic',
-      });
-
-      expect(result.content).toBe('Answer');
-      expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:8000/run',
-        expect.objectContaining({ method: 'POST' })
-      );
-    });
-  });
-
-  describe('error handling', () => {
-    it('throws on HTTP error', async () => {
+    it("should throw on error", async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
-        status: 404,
-        text: async () => 'Not found',
+        status: 500,
+        text: () => Promise.resolve("Internal Server Error"),
       });
 
-      const client = new AmplifierClient();
-      await expect(client.getAgent('ag_missing')).rejects.toThrow('HTTP 404');
+      await expect(client.createSession()).rejects.toThrow(
+        "Failed to create session: 500"
+      );
     });
   });
 
-  describe('authentication', () => {
-    it('includes Authorization header when API key set', async () => {
+  describe("deleteSession", () => {
+    it("should return true on success", async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true });
+
+      const result = await client.deleteSession("sess_123");
+
+      expect(result).toBe(true);
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://localhost:4096/v1/session/sess_123",
+        expect.objectContaining({ method: "DELETE" })
+      );
+    });
+
+    it("should return false on failure", async () => {
+      mockFetch.mockResolvedValueOnce({ ok: false });
+
+      const result = await client.deleteSession("sess_123");
+
+      expect(result).toBe(false);
+    });
+  });
+
+  describe("promptSync", () => {
+    it("should return complete response", async () => {
+      const mockResponse = {
+        content: "Hello! How can I help?",
+        tool_calls: [],
+        session_id: "sess_123",
+        stop_reason: "end_turn",
+      };
+
       mockFetch.mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ status: 'ok' }),
+        json: () => Promise.resolve(mockResponse),
       });
 
-      const client = new AmplifierClient({ apiKey: 'secret-key' });
-      await client.health();
+      const response = await client.promptSync("sess_123", "Hello!");
 
+      expect(response.content).toBe("Hello! How can I help?");
+      expect(response.sessionId).toBe("sess_123");
+      expect(response.stopReason).toBe("end_turn");
+      expect(response.toolCalls).toEqual([]);
+    });
+
+    it("should parse tool calls", async () => {
+      const mockResponse = {
+        content: "The answer is 4",
+        tool_calls: [
+          {
+            tool_name: "calculator",
+            tool_call_id: "tc_123",
+            arguments: { expression: "2+2" },
+            output: "4",
+          },
+        ],
+        session_id: "sess_123",
+        stop_reason: "end_turn",
+      };
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(mockResponse),
+      });
+
+      const response = await client.promptSync("sess_123", "What is 2+2?");
+
+      expect(response.toolCalls).toHaveLength(1);
+      expect(response.toolCalls[0].toolName).toBe("calculator");
+      expect(response.toolCalls[0].output).toBe("4");
+    });
+  });
+
+  describe("cancel", () => {
+    it("should return true on success", async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true });
+
+      const result = await client.cancel("sess_123");
+
+      expect(result).toBe(true);
+    });
+  });
+
+  describe("respondApproval", () => {
+    it("should send approval response", async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true });
+
+      const result = await client.respondApproval("sess_123", "req_456", "approve");
+
+      expect(result).toBe(true);
       expect(mockFetch).toHaveBeenCalledWith(
-        expect.any(String),
+        "http://localhost:4096/v1/session/sess_123/approval",
         expect.objectContaining({
-          headers: expect.objectContaining({
-            Authorization: 'Bearer secret-key',
-          }),
+          method: "POST",
+          body: JSON.stringify({ request_id: "req_456", choice: "approve" }),
         })
       );
+    });
+  });
+
+  describe("run", () => {
+    it("should create session, prompt, and cleanup", async () => {
+      // Mock create session
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ id: "sess_123" }),
+      });
+
+      // Mock prompt sync
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ content: "Hello!", tool_calls: [] }),
+      });
+
+      // Mock delete session
+      mockFetch.mockResolvedValueOnce({ ok: true });
+
+      const response = await client.run("Hello!");
+
+      expect(response.content).toBe("Hello!");
+      expect(mockFetch).toHaveBeenCalledTimes(3);
     });
   });
 });

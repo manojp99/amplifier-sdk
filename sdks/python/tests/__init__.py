@@ -1,1 +1,1 @@
-# Python SDK tests
+"""Tests for Amplifier SDK."""

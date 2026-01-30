@@ -1,6 +1,6 @@
 # Amplifier SDK for Python
 
-Python client for Amplifier AI agents.
+Python client for [amplifier-app-runtime](https://github.com/manojp99/amplifier-app-runtime).
 
 ## Installation
 
@@ -8,153 +8,155 @@ Python client for Amplifier AI agents.
 pip install amplifier-sdk
 ```
 
+Or with uv:
+
+```bash
+uv add amplifier-sdk
+```
+
 ## Quick Start
 
 ```python
-from amplifier_sdk import Agent
+import asyncio
+from amplifier_sdk import AmplifierClient
 
-# Create an agent
-agent = Agent(
-    instructions="You are a helpful coding assistant.",
-    tools=["filesystem", "bash"],
-)
+async def main():
+    async with AmplifierClient() as client:
+        # Create a session
+        session = await client.create_session(bundle="foundation")
+        
+        # Stream a response
+        async for event in client.prompt(session.id, "Hello!"):
+            if event.type == "content.delta":
+                print(event.data.get("delta", ""), end="", flush=True)
+        print()  # Newline at end
+        
+        # Clean up
+        await client.delete_session(session.id)
 
-# Run a prompt
-response = await agent.run("List all Python files in the current directory")
-print(response.content)
-
-# Multi-turn conversation (session state maintained)
-await agent.run("Remember my name is Alice")
-response = await agent.run("What's my name?")
-print(response.content)  # "Your name is Alice"
-
-# Clean up
-await agent.delete()
+asyncio.run(main())
 ```
 
-## Streaming
+## Usage Patterns
+
+### Streaming Response
 
 ```python
-from amplifier_sdk import Agent
-
-agent = Agent(instructions="You are a poet.")
-
-async for event in agent.stream("Write a haiku about coding"):
-    print(event.content, end="", flush=True)
+async with AmplifierClient() as client:
+    session = await client.create_session()
+    
+    async for event in client.prompt(session.id, "Tell me a story"):
+        match event.type:
+            case "content.delta":
+                print(event.data.get("delta", ""), end="", flush=True)
+            case "tool.call":
+                print(f"\nUsing tool: {event.data.get('tool_name')}")
+            case "thinking.delta":
+                print(f"[thinking] {event.data.get('delta', '')}")
+            case "content.end":
+                print()  # Done
 ```
 
-## Context Manager
+### Synchronous Response
 
 ```python
-from amplifier_sdk import Agent
+async with AmplifierClient() as client:
+    session = await client.create_session()
+    
+    # Wait for complete response
+    response = await client.prompt_sync(session.id, "What is 2+2?")
+    print(response.content)  # "4"
+    print(response.tool_calls)  # List of tool calls made
+```
 
-async with Agent(instructions="You help with code.") as agent:
-    response = await agent.run("Hello!")
+### One-Shot Execution
+
+```python
+async with AmplifierClient() as client:
+    # Creates session, runs prompt, returns result, cleans up
+    response = await client.run("What is the capital of France?")
     print(response.content)
-# Agent automatically deleted on exit
 ```
 
-## One-Shot Usage
+### One-Shot Streaming
 
 ```python
-from amplifier_sdk.agent import run
-
-response = await run("What is 2+2?")
-print(response.content)
+async with AmplifierClient() as client:
+    # Creates session, streams prompt, cleans up
+    async for event in client.stream("Tell me about Python"):
+        if event.type == "content.delta":
+            print(event.data.get("delta", ""), end="")
 ```
 
-## Low-Level Client
+### Handling Approvals
 
 ```python
-from amplifier_sdk import AmplifierClient
-
-client = AmplifierClient(base_url="http://localhost:8080")
-
-# Create agent
-agent_id = await client.create_agent(
-    instructions="You are helpful.",
-    tools=["bash"],
-)
-
-# Run prompt
-response = await client.run(agent_id, "Hello!")
-print(response.content)
-
-# Stream
-async for event in client.stream(agent_id, "Write a poem"):
-    print(event.content, end="")
-
-# Delete
-await client.delete_agent(agent_id)
-await client.close()
+async with AmplifierClient() as client:
+    session = await client.create_session()
+    
+    async for event in client.prompt(session.id, "Delete all files"):
+        if event.type == "approval.required":
+            # Agent is asking for permission
+            request_id = event.data.get("request_id")
+            prompt = event.data.get("prompt")
+            options = event.data.get("options")
+            
+            print(f"Approval needed: {prompt}")
+            print(f"Options: {options}")
+            
+            # Respond to approval
+            choice = input("Your choice: ")
+            await client.respond_approval(session.id, request_id, choice)
 ```
 
-## Recipes
+## API Reference
+
+### AmplifierClient
 
 ```python
-from amplifier_sdk import AmplifierClient
-
-client = AmplifierClient()
-
-# Execute recipe
-execution_id = await client.execute_recipe(
-    recipe_yaml="""
-name: code-review
-steps:
-  - id: analyze
-    prompt: Analyze the code structure
-  - id: review
-    prompt: Review based on {{steps.analyze.result}}
-""",
-    context={"project": "my-app"}
-)
-
-# Check status
-execution = await client.get_recipe_execution(execution_id)
-print(execution.status)
-
-# Approve gate
-await client.approve_gate(execution_id, "review-gate")
-```
-
-## Configuration
-
-```python
-from amplifier_sdk import Agent
-
-agent = Agent(
-    instructions="You are helpful.",
-    tools=["filesystem", "bash", "web_search"],
-    provider="anthropic",           # LLM provider
-    model="claude-sonnet-4-20250514",  # Model name
-    base_url="http://localhost:8080",  # Server URL
-    api_key="your-api-key",         # Optional auth
+client = AmplifierClient(
+    base_url="http://localhost:4096",  # Server URL
+    timeout=300.0,                      # Request timeout
 )
 ```
 
-## Response Types
+### Methods
 
-```python
-from amplifier_sdk import RunResponse, StreamEvent
+| Method | Description |
+|--------|-------------|
+| `create_session(bundle, provider, model)` | Create a new session |
+| `get_session(session_id)` | Get session info |
+| `list_sessions()` | List all sessions |
+| `delete_session(session_id)` | Delete a session |
+| `prompt(session_id, content)` | Stream a prompt (async iterator) |
+| `prompt_sync(session_id, content)` | Wait for complete response |
+| `cancel(session_id)` | Cancel ongoing execution |
+| `respond_approval(session_id, request_id, choice)` | Respond to approval |
+| `ping()` | Check server health |
+| `capabilities()` | Get server capabilities |
+| `run(content, ...)` | One-shot execution |
+| `stream(content, ...)` | One-shot streaming |
 
-# RunResponse
-response: RunResponse = await agent.run("Hello")
-response.content      # str - The response text
-response.tool_calls   # list[ToolCall] - Tools that were called
-response.usage        # Usage - Token usage (input_tokens, output_tokens)
-response.stop_reason  # str | None - Why generation stopped
+### Event Types
 
-# StreamEvent
-async for event in agent.stream("Hello"):
-    event.event    # str - Event type
-    event.content  # str - Content from delta events
-    event.is_done  # bool - True if final event
+| Type | Description |
+|------|-------------|
+| `content.delta` | Streaming text chunk |
+| `content.end` | Content complete |
+| `thinking.delta` | Reasoning/thinking chunk |
+| `tool.call` | Tool being called |
+| `tool.result` | Tool result received |
+| `approval.required` | Approval needed |
+| `error` | Error occurred |
+
+## Server Setup
+
+Start the amplifier-app-runtime server:
+
+```bash
+cd amplifier-app-runtime
+uv run python -m amplifier_app_runtime.cli --port 4096
 ```
-
-## Requirements
-
-- Python 3.10+
-- Amplifier server running at localhost:8080
 
 ## License
 

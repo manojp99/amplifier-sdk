@@ -1,333 +1,332 @@
 /**
- * HTTP client for Amplifier server.
+ * Amplifier SDK Client.
+ *
+ * HTTP client for communicating with amplifier-app-runtime server.
+ * Supports both streaming (SSE) and synchronous request modes.
+ * Includes full observability via hooks for request/response/error/state tracking.
  */
 
-import type {
-  AgentInfo,
-  ApprovalInfo,
-  ClientOptions,
-  CreateAgentOptions,
-  ExecuteRecipeOptions,
-  HealthResponse,
-  Message,
-  ModulesResponse,
-  RecipeExecution,
-  RunOnceOptions,
-  RunOptions,
-  RunResponse,
-  SpawnOptions,
-  StreamEvent,
-  SubAgentInfo,
-} from './types';
+import {
+  AmplifierError,
+  ConnectionState,
+  ErrorCode,
+  type Capabilities,
+  type ClientConfig,
+  type Event,
+  type PromptResponse,
+  type RequestInfo,
+  type ResponseInfo,
+  type SessionConfig,
+  type SessionInfo,
+  type StateChangeInfo,
+  type ToolCall,
+} from "./types";
 
+/**
+ * Generate a unique request ID.
+ */
+function generateRequestId(): string {
+  return `req_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * HTTP client for amplifier-app-runtime server.
+ *
+ * @example Basic usage:
+ * ```typescript
+ * const client = new AmplifierClient();
+ * const session = await client.createSession({ bundle: "foundation" });
+ * for await (const event of client.prompt(session.id, "Hello!")) {
+ *   if (event.type === "content.delta") {
+ *     process.stdout.write(event.data.delta as string);
+ *   }
+ * }
+ * ```
+ *
+ * @example With observability hooks:
+ * ```typescript
+ * const client = new AmplifierClient({
+ *   debug: true,
+ *   onRequest: (req) => console.log(`[REQ] ${req.method} ${req.url}`),
+ *   onResponse: (res) => console.log(`[RES] ${res.status} in ${res.durationMs}ms`),
+ *   onError: (err) => console.error(`[ERR] ${err.code}: ${err.message}`),
+ *   onStateChange: (info) => console.log(`[STATE] ${info.from} -> ${info.to}`),
+ * });
+ * ```
+ */
 export class AmplifierClient {
-  private baseUrl: string;
-  private apiKey?: string;
-  private timeout: number;
+  private readonly config: ClientConfig;
+  private readonly baseUrl: string;
+  private readonly timeout: number;
+  private _connectionState: ConnectionState = ConnectionState.Disconnected;
+
+  constructor(config: ClientConfig = {}) {
+    this.config = config;
+    this.baseUrl = (config.baseUrl ?? "http://localhost:4096").replace(/\/$/, "");
+    this.timeout = config.timeout ?? 300000;
+  }
+
+  // ===========================================================================
+  // Connection State (Observable)
+  // ===========================================================================
 
   /**
-   * Create a new Amplifier client.
+   * Current connection state.
+   */
+  get connectionState(): ConnectionState {
+    return this._connectionState;
+  }
+
+  private setConnectionState(state: ConnectionState, reason?: string): void {
+    if (this._connectionState === state) return;
+
+    const info: StateChangeInfo = {
+      from: this._connectionState,
+      to: state,
+      reason,
+      timestamp: new Date(),
+    };
+
+    this._connectionState = state;
+    this.debug(`State change: ${info.from} -> ${info.to}${reason ? ` (${reason})` : ""}`);
+    this.config.onStateChange?.(info);
+  }
+
+  // ===========================================================================
+  // Health & Capabilities
+  // ===========================================================================
+
+  /**
+   * Check if server is alive.
+   */
+  async ping(): Promise<boolean> {
+    try {
+      this.setConnectionState(ConnectionState.Connecting);
+      await this.request("GET", "/v1/ping");
+      this.setConnectionState(ConnectionState.Connected);
+      return true;
+    } catch {
+      this.setConnectionState(ConnectionState.Disconnected, "ping failed");
+      return false;
+    }
+  }
+
+  /**
+   * Get server capabilities.
+   */
+  async capabilities(): Promise<Capabilities> {
+    const data = await this.request("GET", "/v1/capabilities");
+    return data as Capabilities;
+  }
+
+  // ===========================================================================
+  // Session Management
+  // ===========================================================================
+
+  /**
+   * Create a new session.
+   *
+   * @example Using a named bundle:
+   * ```typescript
+   * const session = await client.createSession({ bundle: "foundation" });
+   * ```
+   *
+   * @example Using a runtime bundle definition:
+   * ```typescript
+   * const session = await client.createSession({
+   *   bundle: {
+   *     name: "my-custom-agent",
+   *     providers: [{ module: "provider-anthropic" }],
+   *     tools: [{ module: "tool-filesystem" }],
+   *     instructions: "You are a helpful coding assistant."
+   *   }
+   * });
+   * ```
+   */
+  async createSession(config: SessionConfig = {}): Promise<SessionInfo> {
+    const body: Record<string, unknown> = {};
+
+    if (config.bundle) {
+      if (typeof config.bundle === "string") {
+        body.bundle = config.bundle;
+      } else {
+        body.bundle_definition = this.serializeBundleDefinition(config.bundle);
+      }
+    }
+
+    if (config.provider) body.provider = config.provider;
+    if (config.model) body.model = config.model;
+    if (config.workingDirectory) body.working_directory = config.workingDirectory;
+    if (config.behaviors) body.behaviors = config.behaviors;
+
+    const data = await this.request("POST", "/v1/session", body);
+    return this.parseSessionInfo(data as Record<string, unknown>);
+  }
+
+  /**
+   * Get session information.
+   */
+  async getSession(sessionId: string): Promise<SessionInfo> {
+    const data = await this.request("GET", `/v1/session/${sessionId}`);
+    return this.parseSessionInfo(data as Record<string, unknown>);
+  }
+
+  /**
+   * List all sessions.
+   */
+  async listSessions(): Promise<SessionInfo[]> {
+    const data = await this.request("GET", "/v1/session") as Record<string, unknown>;
+    const sessions = (data.sessions ?? data.active ?? []) as Record<string, unknown>[];
+    return sessions.map((s) => this.parseSessionInfo(s));
+  }
+
+  /**
+   * Delete a session.
+   */
+  async deleteSession(sessionId: string): Promise<boolean> {
+    try {
+      await this.request("DELETE", `/v1/session/${sessionId}`);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // ===========================================================================
+  // Prompt Execution
+  // ===========================================================================
+
+  /**
+   * Send a prompt and stream the response.
    *
    * @example
    * ```typescript
-   * const client = new AmplifierClient({
-   *   baseUrl: 'http://localhost:8000'
-   * });
-   *
-   * // Create agent with full module wiring
-   * const agentId = await client.createAgent({
-   *   instructions: 'You are helpful.',
-   *   provider: 'anthropic',
-   *   model: 'claude-sonnet-4-20250514',
-   *   tools: ['bash', 'filesystem'],
-   *   orchestrator: 'streaming',
-   *   hooks: ['logging'],
-   *   agents: {
-   *     researcher: {
-   *       instructions: 'You research topics.',
-   *       tools: ['web_search']
-   *     }
-   *   }
-   * });
-   *
-   * // Run prompt
-   * const response = await client.run(agentId, 'Hello!');
-   * console.log(response.content);
-   *
-   * // Spawn sub-agent
-   * const subAgentId = await client.spawnAgent(agentId, {
-   *   agentName: 'researcher',
-   *   prompt: 'Research Python async'
-   * });
-   *
-   * // Stream with rich events
-   * for await (const event of client.stream(agentId, 'Write a poem')) {
-   *   if (event.event === 'content:delta') {
-   *     process.stdout.write(event.data.text as string);
-   *   } else if (event.event === 'tool:start') {
-   *     console.log(`\nUsing tool: ${event.data.tool}`);
+   * for await (const event of client.prompt(sessionId, "Hello!")) {
+   *   if (event.type === "content.delta") {
+   *     process.stdout.write(event.data.delta as string);
+   *   } else if (event.type === "tool.call") {
+   *     console.log(`Calling tool: ${event.data.tool_name}`);
    *   }
    * }
-   *
-   * // Execute recipe
-   * const execution = await client.executeRecipe({
-   *   recipe: {
-   *     name: 'analysis',
-   *     steps: [
-   *       { id: 'step1', agent: 'analyzer', prompt: 'Analyze this' }
-   *     ]
-   *   },
-   *   input: { topic: 'AI' }
-   * });
-   *
-   * // Cleanup
-   * await client.deleteAgent(agentId);
    * ```
    */
-  constructor(options: ClientOptions = {}) {
-    this.baseUrl = (options.baseUrl ?? 'http://localhost:8000').replace(/\/$/, '');
-    this.apiKey = options.apiKey;
-    this.timeout = options.timeout ?? 300000;
-  }
+  async *prompt(sessionId: string, content: string): AsyncGenerator<Event> {
+    const requestId = generateRequestId();
+    const url = `${this.baseUrl}/v1/session/${sessionId}/prompt`;
+    const body = { content, stream: true };
+    const startTime = Date.now();
 
-  private getHeaders(): Record<string, string> {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
+    // Emit request info
+    const requestInfo: RequestInfo = {
+      requestId,
+      method: "POST",
+      url,
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+      body,
+      timestamp: new Date(),
     };
-    if (this.apiKey) {
-      headers['Authorization'] = `Bearer ${this.apiKey}`;
-    }
-    return headers;
-  }
+    this.debug(`[${requestId}] POST ${url}`);
+    this.config.onRequest?.(requestInfo);
 
-  private async request<T>(
-    method: string,
-    path: string,
-    body?: unknown
-  ): Promise<T> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-
+    let response: Response;
     try {
-      const response = await fetch(`${this.baseUrl}${path}`, {
-        method,
-        headers: this.getHeaders(),
-        body: body ? JSON.stringify(body) : undefined,
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`HTTP ${response.status}: ${error}`);
-      }
-
-      return (await response.json()) as T;
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  }
-
-  // ===========================================================================
-  // Health & Modules
-  // ===========================================================================
-
-  /**
-   * Check server health.
-   */
-  async health(): Promise<HealthResponse> {
-    return this.request<HealthResponse>('GET', '/health');
-  }
-
-  /**
-   * List available modules.
-   */
-  async listModules(): Promise<ModulesResponse> {
-    return this.request<ModulesResponse>('GET', '/modules');
-  }
-
-  // ===========================================================================
-  // Agent CRUD
-  // ===========================================================================
-
-  /**
-   * Create a new agent with full module wiring support.
-   */
-  async createAgent(options: CreateAgentOptions): Promise<string> {
-    const payload = {
-      instructions: options.instructions,
-      provider: options.provider ?? 'anthropic',
-      providers: options.providers,
-      model: options.model,
-      tools: options.tools ?? [],
-      orchestrator: options.orchestrator ?? 'basic',
-      context_manager: options.contextManager ?? 'simple',
-      hooks: options.hooks ?? [],
-      approval: options.approval,
-      agents: options.agents,
-      config: options.config ?? {},
-    };
-
-    const response = await this.request<{ agent_id: string }>('POST', '/agents', payload);
-    return response.agent_id;
-  }
-
-  /**
-   * Get agent information.
-   */
-  async getAgent(agentId: string): Promise<AgentInfo> {
-    return this.request<AgentInfo>('GET', `/agents/${agentId}`);
-  }
-
-  /**
-   * List all agent IDs.
-   */
-  async listAgents(): Promise<string[]> {
-    const response = await this.request<{ agents: string[] }>('GET', '/agents');
-    return response.agents;
-  }
-
-  /**
-   * Delete an agent.
-   */
-  async deleteAgent(agentId: string): Promise<void> {
-    await this.request<{ deleted: boolean }>('DELETE', `/agents/${agentId}`);
-  }
-
-  // ===========================================================================
-  // Execution
-  // ===========================================================================
-
-  /**
-   * Run a prompt and get response.
-   */
-  async run(
-    agentId: string,
-    prompt: string,
-    options: RunOptions = {}
-  ): Promise<RunResponse> {
-    return this.request<RunResponse>('POST', `/agents/${agentId}/run`, {
-      prompt,
-      max_turns: options.maxTurns ?? 10,
-    });
-  }
-
-  /**
-   * Stream a prompt response with rich event taxonomy.
-   *
-   * Events include:
-   * - session:start/end - Session lifecycle
-   * - prompt:start/complete - Prompt processing
-   * - content:start/delta/complete - Content streaming
-   * - tool:start/result - Tool execution
-   * - agent:spawn/complete - Sub-agent spawning
-   * - approval:requested/responded - Human-in-loop
-   * - done - Execution complete
-   */
-  async *stream(
-    agentId: string,
-    prompt: string,
-    options: RunOptions = {}
-  ): AsyncGenerator<StreamEvent> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-
-    try {
-      const payload: Record<string, unknown> = {
-        prompt,
-        max_turns: options.maxTurns ?? 10,
-      };
-      if (options.streamEvents) {
-        payload.stream_events = options.streamEvents;
-      }
-
-      const response = await fetch(`${this.baseUrl}/agents/${agentId}/stream`, {
-        method: 'POST',
+      response = await fetch(url, {
+        method: "POST",
         headers: {
-          ...this.getHeaders(),
-          Accept: 'text/event-stream',
+          "Content-Type": "application/json",
+          Accept: "text/event-stream",
         },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(this.timeout),
       });
+    } catch (err) {
+      const error = this.wrapError(err, requestId);
+      this.config.onError?.(error);
+      throw error;
+    }
 
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`HTTP ${response.status}: ${error}`);
-      }
+    // Emit response info
+    const responseInfo: ResponseInfo = {
+      requestId,
+      status: response.status,
+      durationMs: Date.now() - startTime,
+      timestamp: new Date(),
+    };
+    this.debug(`[${requestId}] ${response.status} in ${responseInfo.durationMs}ms`);
+    this.config.onResponse?.(responseInfo);
 
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('No response body');
-      }
+    if (!response.ok) {
+      const error = this.createHttpError(response.status, requestId, await response.text());
+      this.config.onError?.(error);
+      throw error;
+    }
 
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let currentEvent = 'message';
+    if (!response.body) {
+      const error = new AmplifierError("No response body", ErrorCode.StreamError, { requestId });
+      this.config.onError?.(error);
+      throw error;
+    }
 
+    // Stream events
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
 
         for (const line of lines) {
-          const trimmedLine = line.trim();
-          if (!trimmedLine) continue;
+          const trimmed = line.trim();
+          if (!trimmed || !trimmed.startsWith("data:")) continue;
 
-          if (trimmedLine.startsWith('event:')) {
-            currentEvent = trimmedLine.slice(6).trim();
-          } else if (trimmedLine.startsWith('data:')) {
-            const dataStr = trimmedLine.slice(5).trim();
-            if (dataStr) {
-              try {
-                const data = JSON.parse(dataStr);
-                yield { event: currentEvent, data };
-              } catch {
-                // Skip invalid JSON
-              }
+          const dataStr = trimmed.slice(5).trim();
+          if (!dataStr) continue;
+
+          try {
+            const data = JSON.parse(dataStr);
+            for (const event of this.parseEvent(data)) {
+              this.debug(`[${requestId}] Event: ${event.type}`);
+              this.config.onEvent?.(event);
+              yield event;
             }
+          } catch {
+            // Skip invalid JSON
           }
         }
       }
+    } catch (err) {
+      const error = this.wrapError(err, requestId);
+      this.config.onError?.(error);
+      throw error;
     } finally {
-      clearTimeout(timeoutId);
+      reader.releaseLock();
     }
   }
 
-  // ===========================================================================
-  // Multi-Agent Orchestration
-  // ===========================================================================
-
   /**
-   * Spawn a sub-agent from a parent agent.
+   * Send a prompt and wait for complete response.
    */
-  async spawnAgent(parentId: string, options: SpawnOptions): Promise<string> {
-    const payload = {
-      agent_name: options.agentName,
-      prompt: options.prompt,
-      inherit_context: options.inheritContext ?? 'none',
-      inherit_context_turns: options.inheritContextTurns ?? 5,
-    };
-
-    const response = await this.request<{ agent_id: string }>(
-      'POST',
-      `/agents/${parentId}/spawn`,
-      payload
-    );
-    return response.agent_id;
+  async promptSync(sessionId: string, content: string): Promise<PromptResponse> {
+    const data = await this.request("POST", `/v1/session/${sessionId}/prompt/sync`, { content });
+    return this.parsePromptResponse(data as Record<string, unknown>);
   }
 
   /**
-   * List sub-agents spawned by a parent agent.
+   * Cancel ongoing execution.
    */
-  async listSubAgents(parentId: string): Promise<SubAgentInfo[]> {
-    const response = await this.request<{ sub_agents: SubAgentInfo[] }>(
-      'GET',
-      `/agents/${parentId}/sub-agents`
-    );
-    return response.sub_agents;
+  async cancel(sessionId: string): Promise<boolean> {
+    try {
+      await this.request("POST", `/v1/session/${sessionId}/cancel`);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   // ===========================================================================
@@ -335,211 +334,276 @@ export class AmplifierClient {
   // ===========================================================================
 
   /**
-   * List pending approval requests for an agent.
+   * Respond to an approval request.
    */
-  async listPendingApprovals(agentId: string): Promise<ApprovalInfo[]> {
-    const response = await this.request<{ approvals: ApprovalInfo[] }>(
-      'GET',
-      `/agents/${agentId}/approvals`
-    );
-    return response.approvals;
-  }
-
-  /**
-   * Approve a pending request.
-   */
-  async approve(agentId: string, approvalId: string, reason?: string): Promise<void> {
-    await this.request(
-      'POST',
-      `/agents/${agentId}/approvals/${approvalId}`,
-      { approved: true, reason }
-    );
-  }
-
-  /**
-   * Deny a pending request.
-   */
-  async deny(agentId: string, approvalId: string, reason?: string): Promise<void> {
-    await this.request(
-      'POST',
-      `/agents/${agentId}/approvals/${approvalId}`,
-      { approved: false, reason }
-    );
-  }
-
-  // ===========================================================================
-  // Recipes (Multi-Step Workflows)
-  // ===========================================================================
-
-  /**
-   * Execute a recipe (multi-step workflow).
-   */
-  async executeRecipe(options: ExecuteRecipeOptions): Promise<RecipeExecution> {
-    const payload: Record<string, unknown> = {
-      input: options.input ?? {},
-    };
-    if (options.recipe) {
-      payload.recipe = options.recipe;
-    } else if (options.recipePath) {
-      payload.recipe_path = options.recipePath;
-    } else {
-      throw new Error('Either recipe or recipePath is required');
-    }
-
-    return this.request<RecipeExecution>('POST', '/recipes', payload);
-  }
-
-  /**
-   * Get recipe execution status.
-   */
-  async getRecipeExecution(executionId: string): Promise<RecipeExecution> {
-    return this.request<RecipeExecution>('GET', `/recipes/${executionId}`);
-  }
-
-  /**
-   * Stream events from a recipe execution.
-   *
-   * Events include:
-   * - recipe:start/complete/failed - Recipe lifecycle
-   * - step:start/complete/failed/skipped - Step lifecycle
-   * - approval:requested - Approval needed
-   */
-  async *streamRecipe(executionId: string): AsyncGenerator<StreamEvent> {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.timeout);
-
+  async respondApproval(
+    sessionId: string,
+    requestId: string,
+    choice: string
+  ): Promise<boolean> {
     try {
-      const response = await fetch(`${this.baseUrl}/recipes/${executionId}/stream`, {
-        method: 'GET',
-        headers: {
-          ...this.getHeaders(),
-          Accept: 'text/event-stream',
-        },
-        signal: controller.signal,
+      await this.request("POST", `/v1/session/${sessionId}/approval`, {
+        request_id: requestId,
+        choice,
       });
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
-      if (!response.ok) {
-        const error = await response.text();
-        throw new Error(`HTTP ${response.status}: ${error}`);
-      }
+  // ===========================================================================
+  // Convenience Methods
+  // ===========================================================================
 
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('No response body');
-      }
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let currentEvent = 'message';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-
-        for (const line of lines) {
-          const trimmedLine = line.trim();
-          if (!trimmedLine) continue;
-
-          if (trimmedLine.startsWith('event:')) {
-            currentEvent = trimmedLine.slice(6).trim();
-          } else if (trimmedLine.startsWith('data:')) {
-            const dataStr = trimmedLine.slice(5).trim();
-            if (dataStr) {
-              try {
-                const data = JSON.parse(dataStr);
-                yield { event: currentEvent, data };
-              } catch {
-                // Skip invalid JSON
-              }
-            }
-          }
-        }
-      }
+  /**
+   * One-shot execution: create session, run prompt, return response.
+   */
+  async run(content: string, config: SessionConfig = {}): Promise<PromptResponse> {
+    const session = await this.createSession(config);
+    try {
+      return await this.promptSync(session.id, content);
     } finally {
-      clearTimeout(timeoutId);
+      await this.deleteSession(session.id);
     }
   }
 
   /**
-   * Approve a recipe step.
+   * One-shot streaming: create session, stream prompt, cleanup.
    */
-  async approveRecipeStep(executionId: string, stepId: string, reason?: string): Promise<void> {
-    await this.request(
-      'POST',
-      `/recipes/${executionId}/approvals/${stepId}`,
-      { approved: true, reason }
-    );
-  }
-
-  /**
-   * Deny a recipe step.
-   */
-  async denyRecipeStep(executionId: string, stepId: string, reason?: string): Promise<void> {
-    await this.request(
-      'POST',
-      `/recipes/${executionId}/approvals/${stepId}`,
-      { approved: false, reason }
-    );
-  }
-
-  /**
-   * List all recipe executions.
-   */
-  async listRecipeExecutions(): Promise<RecipeExecution[]> {
-    const response = await this.request<{ executions: RecipeExecution[] }>('GET', '/recipes');
-    return response.executions;
-  }
-
-  /**
-   * Cancel a recipe execution.
-   */
-  async cancelRecipe(executionId: string): Promise<void> {
-    await this.request('DELETE', `/recipes/${executionId}`);
+  async *stream(content: string, config: SessionConfig = {}): AsyncGenerator<Event> {
+    const session = await this.createSession(config);
+    try {
+      yield* this.prompt(session.id, content);
+    } finally {
+      await this.deleteSession(session.id);
+    }
   }
 
   // ===========================================================================
-  // Messages
+  // Private: HTTP Request with Observability
   // ===========================================================================
 
-  /**
-   * Get conversation messages for an agent.
-   */
-  async getMessages(agentId: string): Promise<Message[]> {
-    const response = await this.request<{ messages: Message[] }>(
-      'GET',
-      `/agents/${agentId}/messages`
-    );
-    return response.messages;
+  private async request(
+    method: string,
+    path: string,
+    body?: unknown
+  ): Promise<unknown> {
+    const requestId = generateRequestId();
+    const url = `${this.baseUrl}${path}`;
+    const startTime = Date.now();
+
+    // Emit request info
+    const requestInfo: RequestInfo = {
+      requestId,
+      method,
+      url,
+      headers: body ? { "Content-Type": "application/json" } : undefined,
+      body,
+      timestamp: new Date(),
+    };
+    this.debug(`[${requestId}] ${method} ${url}`);
+    this.config.onRequest?.(requestInfo);
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method,
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(this.timeout),
+      });
+    } catch (err) {
+      const error = this.wrapError(err, requestId);
+      this.config.onError?.(error);
+      throw error;
+    }
+
+    const durationMs = Date.now() - startTime;
+
+    // Parse response
+    let responseBody: unknown;
+    const contentType = response.headers.get("content-type") ?? "";
+    if (contentType.includes("application/json")) {
+      responseBody = await response.json();
+    } else {
+      responseBody = await response.text();
+    }
+
+    // Emit response info
+    const responseInfo: ResponseInfo = {
+      requestId,
+      status: response.status,
+      body: responseBody,
+      durationMs,
+      timestamp: new Date(),
+    };
+    this.debug(`[${requestId}] ${response.status} in ${durationMs}ms`);
+    this.config.onResponse?.(responseInfo);
+
+    if (!response.ok) {
+      const error = this.createHttpError(
+        response.status,
+        requestId,
+        typeof responseBody === "string" ? responseBody : JSON.stringify(responseBody)
+      );
+      this.config.onError?.(error);
+      throw error;
+    }
+
+    return responseBody;
   }
 
-  /**
-   * Clear conversation messages for an agent.
-   */
-  async clearMessages(agentId: string): Promise<void> {
-    await this.request<{ cleared: boolean }>('DELETE', `/agents/${agentId}/messages`);
-  }
-
   // ===========================================================================
-  // One-off Execution
+  // Private: Error Handling
   // ===========================================================================
 
-  /**
-   * Run a one-off prompt without persistent agent.
-   */
-  async runOnce(options: RunOnceOptions): Promise<RunResponse> {
-    const payload = {
-      prompt: options.prompt,
-      instructions: options.instructions ?? 'You are a helpful assistant.',
-      provider: options.provider ?? 'anthropic',
-      model: options.model,
-      tools: options.tools ?? [],
-      max_turns: options.maxTurns ?? 10,
+  private createHttpError(status: number, requestId: string, body?: string): AmplifierError {
+    const codeMap: Record<number, ErrorCode> = {
+      400: ErrorCode.BadRequest,
+      401: ErrorCode.Unauthorized,
+      403: ErrorCode.Forbidden,
+      404: ErrorCode.NotFound,
+      500: ErrorCode.ServerError,
+      502: ErrorCode.ServerError,
+      503: ErrorCode.ServerError,
     };
 
-    return this.request<RunResponse>('POST', '/run', payload);
+    const code = codeMap[status] ?? ErrorCode.Unknown;
+    const message = body || `HTTP ${status}`;
+
+    return new AmplifierError(message, code, { status, requestId });
   }
+
+  private wrapError(err: unknown, requestId: string): AmplifierError {
+    if (err instanceof AmplifierError) {
+      return err;
+    }
+
+    const error = err as Error;
+    const message = error?.message ?? String(err);
+
+    // Detect specific error types
+    if (message.includes("timeout") || message.includes("aborted")) {
+      return new AmplifierError(message, ErrorCode.Timeout, { requestId, cause: error });
+    }
+    if (message.includes("ECONNREFUSED") || message.includes("fetch failed")) {
+      return new AmplifierError(message, ErrorCode.ConnectionRefused, { requestId, cause: error });
+    }
+
+    return new AmplifierError(message, ErrorCode.NetworkError, { requestId, cause: error });
+  }
+
+  // ===========================================================================
+  // Private: Parsing Helpers
+  // ===========================================================================
+
+  private parseSessionInfo(data: Record<string, unknown>): SessionInfo {
+    return {
+      id: (data.id ?? data.session_id ?? "") as string,
+      title: (data.title ?? "") as string,
+      bundle: (data.bundle ?? undefined) as string | undefined,
+      createdAt: (data.created_at ?? "") as string,
+      updatedAt: (data.updated_at ?? "") as string,
+      state: (data.state ?? "ready") as string,
+    };
+  }
+
+  private parseEvent(data: Record<string, unknown>): Event[] {
+    const eventData = (data.data ?? {}) as Record<string, unknown>;
+    const eventType = (data.type ?? "") as string;
+
+    const baseEvent: Event = {
+      type: eventType,
+      data: eventData,
+      id: data.id as string | undefined,
+      correlationId: data.correlation_id as string | undefined,
+      sequence: data.sequence as number | undefined,
+      final: (data.final ?? false) as boolean,
+      timestamp: data.timestamp as string | undefined,
+    };
+
+    // Server sends full content in content.end - emit synthetic content.delta for streaming UX
+    if (eventType === "content.end" && eventData.content) {
+      const deltaEvent: Event = {
+        ...baseEvent,
+        type: "content.delta",
+        data: { delta: eventData.content },
+      };
+      return [deltaEvent, baseEvent];
+    }
+
+    return [baseEvent];
+  }
+
+  private parsePromptResponse(data: Record<string, unknown>): PromptResponse {
+    const toolCalls = ((data.tool_calls ?? []) as Record<string, unknown>[]).map(
+      (tc): ToolCall => ({
+        toolName: (tc.tool_name ?? "") as string,
+        toolCallId: (tc.tool_call_id ?? "") as string,
+        arguments: (tc.arguments ?? {}) as Record<string, unknown>,
+        output: tc.output,
+      })
+    );
+
+    return {
+      content: (data.content ?? "") as string,
+      toolCalls,
+      sessionId: (data.session_id ?? "") as string,
+      stopReason: (data.stop_reason ?? "") as string,
+    };
+  }
+
+  private serializeBundleDefinition(
+    bundle: import("./types").BundleDefinition
+  ): Record<string, unknown> {
+    return {
+      name: bundle.name,
+      version: bundle.version ?? "1.0.0",
+      description: bundle.description,
+      providers: bundle.providers,
+      tools: bundle.tools,
+      hooks: bundle.hooks,
+      orchestrator: bundle.orchestrator,
+      context: bundle.context,
+      agents: bundle.agents?.map((a) => ({
+        name: a.name,
+        description: a.description,
+        instructions: a.instructions,
+        tools: a.tools,
+      })),
+      instructions: bundle.instructions,
+      session: bundle.session,
+      includes: bundle.includes,
+    };
+  }
+
+  // ===========================================================================
+  // Private: Debug Logging
+  // ===========================================================================
+
+  private debug(message: string): void {
+    if (this.config.debug) {
+      console.log(`[AmplifierSDK] ${message}`);
+    }
+  }
+}
+
+/**
+ * Quick one-shot execution.
+ *
+ * @example
+ * ```typescript
+ * import { run } from "amplifier-sdk";
+ *
+ * const response = await run("What is 2+2?");
+ * console.log(response.content);
+ * ```
+ */
+export async function run(
+  content: string,
+  config: SessionConfig & ClientConfig = {}
+): Promise<PromptResponse> {
+  const client = new AmplifierClient(config);
+  return client.run(content, config);
 }

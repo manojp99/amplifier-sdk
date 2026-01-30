@@ -1,26 +1,44 @@
-"""Amplifier SDK - Python client for Amplifier AI agents."""
+"""Amplifier SDK - Python client for amplifier-app-runtime.
 
-from amplifier_sdk.agent import Agent, run
-from amplifier_sdk.client import AmplifierClient
-from amplifier_sdk.models import (
-    AgentConfig,
-    AgentInfo,
-    RunResponse,
-    StreamEvent,
+Simple, typed Python client for interacting with Amplifier runtime server.
+
+Example:
+    ```python
+    from amplifier_sdk import AmplifierClient
+
+    async with AmplifierClient() as client:
+        # Create a session
+        session = await client.create_session(bundle="foundation")
+
+        # Send a prompt and stream the response
+        async for event in client.prompt(session.id, "Hello!"):
+            if event.type == "content.delta":
+                print(event.data.get("delta", ""), end="", flush=True)
+
+        # Or get the complete response
+        response = await client.prompt_sync(session.id, "What is 2+2?")
+        print(response.content)
+    ```
+"""
+
+from .client import AmplifierClient
+from .types import (
+    ApprovalRequest,
+    Event,
+    EventType,
+    PromptResponse,
+    SessionInfo,
     ToolCall,
-    Usage,
 )
 
 __version__ = "0.1.0"
 
 __all__ = [
     "AmplifierClient",
-    "Agent",
-    "AgentConfig",
-    "AgentInfo",
-    "RunResponse",
-    "StreamEvent",
+    "Event",
+    "EventType",
+    "SessionInfo",
+    "PromptResponse",
     "ToolCall",
-    "Usage",
-    "run",
+    "ApprovalRequest",
 ]

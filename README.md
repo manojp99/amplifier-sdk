@@ -1,113 +1,177 @@
 # Amplifier SDK
 
-Multi-language SDKs for Amplifier, powered by a local HTTP server.
+Multi-language SDKs for [amplifier-app-runtime](https://github.com/manojp99/amplifier-app-runtime).
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  Your App (Python, TypeScript, Go, ...)            │
-│      │                                              │
-│      │ HTTP + SSE                                   │
-│      ▼                                              │
-│  ┌─────────────────────────────────────────────┐   │
-│  │       amplifier-server (localhost)          │   │
-│  │         REST API + Streaming                │   │
-│  └─────────────────────────────────────────────┘   │
-│      │                                              │
-│      ▼                                              │
-│  ┌─────────────────────────────────────────────┐   │
-│  │         amplifier-foundation                │   │
-│  └─────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│  Your App (Python, TypeScript, Go, ...)                             │
+│      │                                                              │
+│      │ HTTP + SSE (streaming)                                       │
+│      ▼                                                              │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │       amplifier-app-runtime (localhost:4096)                │   │
+│  │         • REST API + SSE streaming                          │   │
+│  │         • Session management                                │   │
+│  │         • ACP protocol support                              │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│      │                                                              │
+│      ▼                                                              │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │         amplifier-foundation + amplifier-core               │   │
+│  │           (Bundles, Providers, Tools, Agents)               │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
 ```
+
+## SDKs
+
+| Language | Package | Status |
+|----------|---------|--------|
+| Python | [sdks/python](sdks/python) | ✅ Ready |
+| TypeScript | [sdks/typescript](sdks/typescript) | ✅ Ready |
 
 ## Quick Start
 
 ### 1. Start the Server
 
 ```bash
-cd amplifier-server
-pip install -e .
-
-export ANTHROPIC_API_KEY=your-key
-amplifier-server
+cd amplifier-app-runtime
+uv run python -m amplifier_app_runtime.cli --port 4096
 ```
 
-### 2. Use from Any Language
+### 2. Use the SDK
 
 **Python:**
 ```python
-import httpx
+import asyncio
+from amplifier_sdk import AmplifierClient
 
-client = httpx.Client(base_url="http://localhost:8080")
+async def main():
+    async with AmplifierClient() as client:
+        # Create a session
+        session = await client.create_session(bundle="foundation")
+        
+        # Stream a response
+        async for event in client.prompt(session.id, "Hello!"):
+            if event.type == "content.delta":
+                print(event.data.get("delta", ""), end="", flush=True)
+        
+        # Clean up
+        await client.delete_session(session.id)
 
-# Create agent
-agent = client.post("/agents", json={
-    "instructions": "You help with code.",
-    "provider": "anthropic"
-}).json()
-
-# Run prompt
-response = client.post(f"/agents/{agent['agent_id']}/run", json={
-    "prompt": "Hello!"
-}).json()
-
-print(response["content"])
+asyncio.run(main())
 ```
 
 **TypeScript:**
 ```typescript
-// Create agent
-const agent = await fetch('http://localhost:8080/agents', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ instructions: 'You help with code.', provider: 'anthropic' })
-}).then(r => r.json());
+import { AmplifierClient } from "amplifier-sdk";
 
-// Run prompt
-const response = await fetch(`http://localhost:8080/agents/${agent.agent_id}/run`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ prompt: 'Hello!' })
-}).then(r => r.json());
+const client = new AmplifierClient();
 
-console.log(response.content);
+// Create a session
+const session = await client.createSession({ bundle: "foundation" });
+
+// Stream a response
+for await (const event of client.prompt(session.id, "Hello!")) {
+  if (event.type === "content.delta") {
+    process.stdout.write(event.data.delta as string);
+  }
+}
+
+// Clean up
+await client.deleteSession(session.id);
 ```
 
 **curl:**
 ```bash
-# Create agent
-AGENT=$(curl -s -X POST http://localhost:8080/agents \
+# Create session
+SESSION=$(curl -s -X POST http://localhost:4096/v1/session \
   -H "Content-Type: application/json" \
-  -d '{"instructions": "You help with code.", "provider": "anthropic"}')
+  -d '{"bundle": "foundation"}')
 
-AGENT_ID=$(echo $AGENT | jq -r '.agent_id')
+SESSION_ID=$(echo $SESSION | jq -r '.id')
 
-# Run prompt
-curl -X POST "http://localhost:8080/agents/$AGENT_ID/run" \
+# Send prompt (streaming)
+curl -N -X POST "http://localhost:4096/v1/session/$SESSION_ID/prompt" \
   -H "Content-Type: application/json" \
-  -d '{"prompt": "Hello!"}'
+  -H "Accept: text/event-stream" \
+  -d '{"content": "Hello!"}'
+
+# Or synchronous
+curl -X POST "http://localhost:4096/v1/session/$SESSION_ID/prompt/sync" \
+  -H "Content-Type: application/json" \
+  -d '{"content": "What is 2+2?"}'
 ```
 
 ## API Endpoints
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/health` | GET | Health check |
-| `/agents` | POST | Create agent |
-| `/agents/{id}/run` | POST | Execute prompt |
-| `/agents/{id}/stream` | POST | Stream execution (SSE) |
-| `/agents/{id}` | DELETE | Delete agent |
-| `/recipes/execute` | POST | Execute recipe |
-| `/recipes/{id}` | GET | Get execution status |
+| `/v1/ping` | GET | Health check |
+| `/v1/capabilities` | GET | Server capabilities |
+| `/v1/session` | GET | List sessions |
+| `/v1/session` | POST | Create session |
+| `/v1/session/{id}` | GET | Get session |
+| `/v1/session/{id}` | DELETE | Delete session |
+| `/v1/session/{id}/prompt` | POST | Send prompt (streaming SSE) |
+| `/v1/session/{id}/prompt/sync` | POST | Send prompt (wait for completion) |
+| `/v1/session/{id}/cancel` | POST | Cancel execution |
+| `/v1/session/{id}/approval` | POST | Respond to approval |
 
-See [amplifier-server/README.md](amplifier-server/README.md) for full API documentation.
+## Event Types
 
-## Documentation
+| Event | Description |
+|-------|-------------|
+| `content.delta` | Streaming text chunk |
+| `content.end` | Content complete |
+| `thinking.delta` | Reasoning/thinking |
+| `tool.call` | Tool being called |
+| `tool.result` | Tool result |
+| `approval.required` | User approval needed |
+| `agent.spawned` | Sub-agent started |
+| `agent.completed` | Sub-agent finished |
+| `error` | Error occurred |
 
-- [Why Server + SDK?](docs/WHY_SDK.md) - Architecture rationale
-- [Server API Plan](docs/SERVER_API_PLAN.md) - Full API specification
+## Project Structure
+
+```
+amplifier-sdk/
+├── amplifier-app-runtime/    # Server (git submodule)
+├── sdks/
+│   ├── python/               # Python SDK
+│   │   ├── src/amplifier_sdk/
+│   │   │   ├── client.py     # HTTP client
+│   │   │   └── types.py      # Type definitions
+│   │   └── pyproject.toml
+│   └── typescript/           # TypeScript SDK
+│       ├── src/
+│       │   ├── client.ts     # HTTP client
+│       │   └── types.ts      # Type definitions
+│       └── package.json
+└── README.md
+```
+
+## Development
+
+### Python SDK
+
+```bash
+cd sdks/python
+uv venv && source .venv/bin/activate
+uv pip install -e ".[dev]"
+pytest
+```
+
+### TypeScript SDK
+
+```bash
+cd sdks/typescript
+npm install
+npm run build
+npm test
+```
 
 ## License
 

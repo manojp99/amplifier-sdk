@@ -1,171 +1,229 @@
 # Amplifier SDK for TypeScript
 
-TypeScript client for Amplifier AI agents.
+TypeScript client for [amplifier-app-runtime](https://github.com/manojp99/amplifier-app-runtime).
 
 ## Installation
 
 ```bash
-npm install @anthropic/amplifier-sdk
+npm install amplifier-sdk
+```
+
+Or with yarn:
+
+```bash
+yarn add amplifier-sdk
 ```
 
 ## Quick Start
 
 ```typescript
-import { Agent } from '@anthropic/amplifier-sdk';
-
-// Create an agent
-const agent = new Agent({
-  instructions: 'You are a helpful coding assistant.',
-  tools: ['filesystem', 'bash'],
-});
-
-// Run a prompt
-const response = await agent.run('List all TypeScript files');
-console.log(response.content);
-
-// Multi-turn conversation (session state maintained)
-await agent.run('Remember my name is Alice');
-const response2 = await agent.run("What's my name?");
-console.log(response2.content); // "Your name is Alice"
-
-// Clean up
-await agent.delete();
-```
-
-## Streaming
-
-```typescript
-import { Agent } from '@anthropic/amplifier-sdk';
-
-const agent = new Agent({ instructions: 'You are a poet.' });
-
-for await (const event of agent.stream('Write a haiku about coding')) {
-  process.stdout.write(event.data.content || '');
-}
-```
-
-## One-Shot Usage
-
-```typescript
-import { run } from '@anthropic/amplifier-sdk';
-
-const response = await run('What is 2+2?');
-console.log(response.content);
-```
-
-## Low-Level Client
-
-```typescript
-import { AmplifierClient } from '@anthropic/amplifier-sdk';
-
-const client = new AmplifierClient({
-  baseUrl: 'http://localhost:8080',
-  apiKey: 'your-api-key', // optional
-});
-
-// Create agent
-const agentId = await client.createAgent({
-  instructions: 'You are helpful.',
-  tools: ['bash'],
-});
-
-// Run prompt
-const response = await client.run(agentId, 'Hello!');
-console.log(response.content);
-
-// Stream
-for await (const event of client.stream(agentId, 'Write a poem')) {
-  process.stdout.write(event.data.content || '');
-}
-
-// Delete
-await client.deleteAgent(agentId);
-```
-
-## Recipes
-
-```typescript
-import { AmplifierClient } from '@anthropic/amplifier-sdk';
+import { AmplifierClient } from "amplifier-sdk";
 
 const client = new AmplifierClient();
 
-// Execute recipe
-const executionId = await client.executeRecipe({
-  recipeYaml: `
-name: code-review
-steps:
-  - id: analyze
-    prompt: Analyze the code structure
-  - id: review
-    prompt: Review based on {{steps.analyze.result}}
-`,
-  context: { project: 'my-app' },
-});
+// Create a session
+const session = await client.createSession({ bundle: "foundation" });
 
-// Check status
-const execution = await client.getRecipeExecution(executionId);
-console.log(execution.status);
+// Stream a response
+for await (const event of client.prompt(session.id, "Hello!")) {
+  if (event.type === "content.delta") {
+    process.stdout.write(event.data.delta as string);
+  }
+}
+console.log(); // Newline at end
 
-// Approve gate
-await client.approveGate(executionId, 'review-gate');
+// Clean up
+await client.deleteSession(session.id);
 ```
 
-## Configuration
+## Usage Patterns
+
+### Streaming Response
 
 ```typescript
-import { Agent } from '@anthropic/amplifier-sdk';
+const client = new AmplifierClient();
+const session = await client.createSession();
 
-const agent = new Agent({
-  instructions: 'You are helpful.',
-  tools: ['filesystem', 'bash', 'web_search'],
-  provider: 'anthropic',              // LLM provider
-  model: 'claude-sonnet-4-20250514',     // Model name
-  baseUrl: 'http://localhost:8080',   // Server URL
-  apiKey: 'your-api-key',             // Optional auth
-  timeout: 300000,                    // Timeout in ms
+for await (const event of client.prompt(session.id, "Tell me a story")) {
+  switch (event.type) {
+    case "content.delta":
+      process.stdout.write(event.data.delta as string);
+      break;
+    case "tool.call":
+      console.log(`\nUsing tool: ${event.data.tool_name}`);
+      break;
+    case "thinking.delta":
+      console.log(`[thinking] ${event.data.delta}`);
+      break;
+    case "content.end":
+      console.log(); // Done
+      break;
+  }
+}
+```
+
+### Synchronous Response
+
+```typescript
+const client = new AmplifierClient();
+const session = await client.createSession();
+
+// Wait for complete response
+const response = await client.promptSync(session.id, "What is 2+2?");
+console.log(response.content); // "4"
+console.log(response.toolCalls); // List of tool calls made
+```
+
+### One-Shot Execution
+
+```typescript
+import { run } from "amplifier-sdk";
+
+// Creates session, runs prompt, returns result, cleans up
+const response = await run("What is the capital of France?");
+console.log(response.content);
+```
+
+### One-Shot Streaming
+
+```typescript
+const client = new AmplifierClient();
+
+// Creates session, streams prompt, cleans up
+for await (const event of client.stream("Tell me about TypeScript")) {
+  if (event.type === "content.delta") {
+    process.stdout.write(event.data.delta as string);
+  }
+}
+```
+
+### Handling Approvals
+
+```typescript
+import * as readline from "readline";
+
+const client = new AmplifierClient();
+const session = await client.createSession();
+
+for await (const event of client.prompt(session.id, "Delete all files")) {
+  if (event.type === "approval.required") {
+    // Agent is asking for permission
+    const { request_id, prompt, options } = event.data;
+
+    console.log(`Approval needed: ${prompt}`);
+    console.log(`Options: ${options}`);
+
+    // Get user input
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+
+    const choice = await new Promise<string>((resolve) => {
+      rl.question("Your choice: ", (answer) => {
+        rl.close();
+        resolve(answer);
+      });
+    });
+
+    await client.respondApproval(session.id, request_id as string, choice);
+  }
+}
+```
+
+## API Reference
+
+### AmplifierClient
+
+```typescript
+const client = new AmplifierClient({
+  baseUrl: "http://localhost:4096", // Server URL
+  timeout: 300000, // Request timeout (ms)
 });
 ```
 
-## Types
+### Methods
+
+| Method                                            | Description                        |
+| ------------------------------------------------- | ---------------------------------- |
+| `createSession(config)`                           | Create a new session               |
+| `getSession(sessionId)`                           | Get session info                   |
+| `listSessions()`                                  | List all sessions                  |
+| `deleteSession(sessionId)`                        | Delete a session                   |
+| `prompt(sessionId, content)`                      | Stream a prompt (async generator)  |
+| `promptSync(sessionId, content)`                  | Wait for complete response         |
+| `cancel(sessionId)`                               | Cancel ongoing execution           |
+| `respondApproval(sessionId, requestId, choice)`   | Respond to approval                |
+| `ping()`                                          | Check server health                |
+| `capabilities()`                                  | Get server capabilities            |
+| `run(content, config)`                            | One-shot execution                 |
+| `stream(content, config)`                         | One-shot streaming                 |
+
+### Event Types
+
+| Type                | Description             |
+| ------------------- | ----------------------- |
+| `content.delta`     | Streaming text chunk    |
+| `content.end`       | Content complete        |
+| `thinking.delta`    | Reasoning/thinking chunk|
+| `tool.call`         | Tool being called       |
+| `tool.result`       | Tool result received    |
+| `approval.required` | Approval needed         |
+| `error`             | Error occurred          |
+
+### Types
 
 ```typescript
-import type {
-  Agent,
-  AgentConfig,
-  RunResponse,
-  StreamEvent,
-  ToolCall,
-  Usage,
-  RecipeExecution,
-} from '@anthropic/amplifier-sdk';
-
-// RunResponse
-interface RunResponse {
-  content: string;
-  tool_calls: ToolCall[];
-  usage: Usage;
-  stop_reason?: string;
+interface SessionConfig {
+  bundle?: string;
+  provider?: string;
+  model?: string;
+  workingDirectory?: string;
 }
 
-// StreamEvent
-interface StreamEvent {
-  event: string;
+interface Event {
+  type: string;
   data: Record<string, unknown>;
+  correlationId?: string;
+  sequence?: number;
+  final?: boolean;
 }
 
-// ToolCall
-interface ToolCall {
-  id: string;
-  name: string;
-  arguments: Record<string, unknown>;
-  result?: string;
+interface PromptResponse {
+  content: string;
+  toolCalls: ToolCall[];
+  sessionId?: string;
+  stopReason?: string;
 }
 ```
 
-## Requirements
+## Server Setup
 
-- Node.js 18+ or modern browser with fetch support
-- Amplifier server running at localhost:8080
+Start the amplifier-app-runtime server:
+
+```bash
+cd amplifier-app-runtime
+uv run python -m amplifier_app_runtime.cli --port 4096
+```
+
+## Browser Usage
+
+The SDK uses the Fetch API and works in modern browsers:
+
+```html
+<script type="module">
+  import { AmplifierClient } from "amplifier-sdk";
+
+  const client = new AmplifierClient({ baseUrl: "http://localhost:4096" });
+  const session = await client.createSession();
+
+  for await (const event of client.prompt(session.id, "Hello!")) {
+    if (event.type === "content.delta") {
+      document.body.innerHTML += event.data.delta;
+    }
+  }
+</script>
+```
 
 ## License
 
