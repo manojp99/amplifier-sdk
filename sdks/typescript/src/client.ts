@@ -55,12 +55,29 @@ function generateRequestId(): string {
  * });
  * ```
  */
+/**
+ * Event handler function type.
+ */
+type EventHandler = (event: Event) => void | Promise<void>;
+
+/**
+ * Approval handler function type.
+ */
+type ApprovalHandler = (request: {
+  requestId: string;
+  prompt: string;
+  toolName?: string;
+  arguments?: Record<string, unknown>;
+}) => Promise<boolean> | boolean;
+
 export class AmplifierClient {
   private readonly config: ClientConfig;
   private readonly baseUrl: string;
   private readonly timeout: number;
   private _connectionState: ConnectionState = ConnectionState.Disconnected;
   private readonly clientTools: Map<string, ClientTool> = new Map();
+  private readonly eventHandlers: Map<string, Set<EventHandler>> = new Map();
+  private approvalHandler: ApprovalHandler | null = null;
 
   constructor(config: ClientConfig = {}) {
     this.config = config;
@@ -332,6 +349,32 @@ export class AmplifierClient {
                   continue;
                 }
               }
+
+              // Handle approval requests with registered handler
+              if (event.type === "approval.required" && this.approvalHandler) {
+                const requestId = event.data.request_id as string;
+                const prompt = event.data.prompt as string;
+                const toolName = event.data.tool_name as string | undefined;
+                const args = event.data.arguments as Record<string, unknown> | undefined;
+
+                try {
+                  const approved = await this.approvalHandler({
+                    requestId,
+                    prompt,
+                    toolName,
+                    arguments: args,
+                  });
+
+                  // Automatically respond to approval
+                  await this.respondApproval(sessionId, requestId, approved.toString());
+                  this.debug(`[${requestId}] Auto-responded to approval: ${approved}`);
+                } catch (err) {
+                  console.error("Approval handler error:", err);
+                }
+              }
+              
+              // Emit to registered event handlers
+              await this.emitEvent(event);
               
               yield event;
             }
@@ -444,6 +487,68 @@ export class AmplifierClient {
   }
 
   // ===========================================================================
+  // Event Handlers (Convenience API)
+  // ===========================================================================
+
+  /**
+   * Register an event handler.
+   * 
+   * @example
+   * ```typescript
+   * client.on("tool.call", (event) => {
+   *   console.log(`Calling tool: ${event.data.tool_name}`);
+   * });
+   * 
+   * client.on("content.delta", (event) => {
+   *   process.stdout.write(event.data.delta);
+   * });
+   * ```
+   */
+  on(eventType: string, handler: EventHandler): void {
+    if (!this.eventHandlers.has(eventType)) {
+      this.eventHandlers.set(eventType, new Set());
+    }
+    this.eventHandlers.get(eventType)!.add(handler);
+  }
+
+  /**
+   * Unregister an event handler.
+   */
+  off(eventType: string, handler: EventHandler): void {
+    const handlers = this.eventHandlers.get(eventType);
+    if (handlers) {
+      handlers.delete(handler);
+    }
+  }
+
+  /**
+   * Register a one-time event handler.
+   */
+  once(eventType: string, handler: EventHandler): void {
+    const wrappedHandler: EventHandler = (event) => {
+      handler(event);
+      this.off(eventType, wrappedHandler);
+    };
+    this.on(eventType, wrappedHandler);
+  }
+
+  /**
+   * Emit event to registered handlers.
+   */
+  private async emitEvent(event: Event): Promise<void> {
+    const handlers = this.eventHandlers.get(event.type);
+    if (handlers) {
+      for (const handler of handlers) {
+        try {
+          await handler(event);
+        } catch (err) {
+          console.error(`Event handler error for ${event.type}:`, err);
+        }
+      }
+    }
+  }
+
+  // ===========================================================================
   // Approval System
   // ===========================================================================
 
@@ -464,6 +569,28 @@ export class AmplifierClient {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Register an approval handler (convenience method).
+   * 
+   * When the AI requests approval, your handler will be called automatically.
+   * Return true to approve, false to deny.
+   * 
+   * @example
+   * ```typescript
+   * client.onApproval(async (request) => {
+   *   const userChoice = await showDialog({
+   *     title: "Permission Required",
+   *     message: request.prompt,
+   *     tool: request.toolName
+   *   });
+   *   return userChoice; // true = approve, false = deny
+   * });
+   * ```
+   */
+  onApproval(handler: ApprovalHandler): void {
+    this.approvalHandler = handler;
   }
 
   // ===========================================================================
