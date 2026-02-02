@@ -186,6 +186,12 @@ export class AmplifierClient {
    * Get session information.
    */
   async getSession(sessionId: string): Promise<SessionInfo> {
+    if (!sessionId || typeof sessionId !== "string") {
+      throw new AmplifierError(
+        "Session ID is required and must be a string",
+        ErrorCode.BadRequest
+      );
+    }
     const data = await this.request("GET", `/v1/session/${sessionId}`);
     return this.parseSessionInfo(data as Record<string, unknown>);
   }
@@ -218,6 +224,13 @@ export class AmplifierClient {
    * ```
    */
   async resumeSession(sessionId: string) {
+    if (!sessionId || typeof sessionId !== "string") {
+      throw new AmplifierError(
+        "Session ID is required and must be a string",
+        ErrorCode.BadRequest
+      );
+    }
+    
     const info = await this.getSession(sessionId);
     
     return {
@@ -233,6 +246,12 @@ export class AmplifierClient {
    * Delete a session.
    */
   async deleteSession(sessionId: string): Promise<boolean> {
+    if (!sessionId || typeof sessionId !== "string") {
+      throw new AmplifierError(
+        "Session ID is required and must be a string",
+        ErrorCode.BadRequest
+      );
+    }
     try {
       await this.request("DELETE", `/v1/session/${sessionId}`);
       return true;
@@ -260,6 +279,19 @@ export class AmplifierClient {
    * ```
    */
   async *prompt(sessionId: string, content: string): AsyncGenerator<Event> {
+    if (!sessionId || typeof sessionId !== "string") {
+      throw new AmplifierError(
+        "Session ID is required and must be a string",
+        ErrorCode.BadRequest
+      );
+    }
+    if (!content || typeof content !== "string") {
+      throw new AmplifierError(
+        "Prompt content is required and must be a string",
+        ErrorCode.BadRequest
+      );
+    }
+
     const requestId = generateRequestId();
     const url = `${this.baseUrl}/v1/session/${sessionId}/prompt`;
     const body = { content, stream: true };
@@ -426,6 +458,18 @@ export class AmplifierClient {
    * Send a prompt and wait for complete response.
    */
   async promptSync(sessionId: string, content: string): Promise<PromptResponse> {
+    if (!sessionId || typeof sessionId !== "string") {
+      throw new AmplifierError(
+        "Session ID is required and must be a string",
+        ErrorCode.BadRequest
+      );
+    }
+    if (!content || typeof content !== "string") {
+      throw new AmplifierError(
+        "Prompt content is required and must be a string",
+        ErrorCode.BadRequest
+      );
+    }
     const data = await this.request("POST", `/v1/session/${sessionId}/prompt/sync`, { content });
     return this.parsePromptResponse(data as Record<string, unknown>);
   }
@@ -434,6 +478,12 @@ export class AmplifierClient {
    * Cancel ongoing execution.
    */
   async cancel(sessionId: string): Promise<boolean> {
+    if (!sessionId || typeof sessionId !== "string") {
+      throw new AmplifierError(
+        "Session ID is required and must be a string",
+        ErrorCode.BadRequest
+      );
+    }
     try {
       await this.request("POST", `/v1/session/${sessionId}/cancel`);
       return true;
@@ -471,6 +521,31 @@ export class AmplifierClient {
    * ```
    */
   registerTool(tool: ClientTool): void {
+    if (!tool || typeof tool !== "object") {
+      throw new AmplifierError(
+        "Tool must be an object",
+        ErrorCode.BadRequest
+      );
+    }
+    if (!tool.name || typeof tool.name !== "string") {
+      throw new AmplifierError(
+        "Tool name is required and must be a string",
+        ErrorCode.BadRequest
+      );
+    }
+    if (!tool.description || typeof tool.description !== "string") {
+      throw new AmplifierError(
+        "Tool description is required and must be a string",
+        ErrorCode.BadRequest
+      );
+    }
+    if (!tool.handler || typeof tool.handler !== "function") {
+      throw new AmplifierError(
+        "Tool handler is required and must be a function",
+        ErrorCode.BadRequest
+      );
+    }
+
     this.clientTools.set(tool.name, tool);
     this.debug(`Registered client-side tool: ${tool.name}`);
   }
@@ -568,7 +643,8 @@ export class AmplifierClient {
   private async emitEvent(event: Event): Promise<void> {
     const handlers = this.eventHandlers.get(event.type);
     if (handlers) {
-      for (const handler of handlers) {
+      // Convert Set to Array for iteration (TS compatibility)
+      for (const handler of Array.from(handlers)) {
         try {
           await handler(event);
         } catch (err) {
@@ -590,6 +666,24 @@ export class AmplifierClient {
     requestId: string,
     choice: string
   ): Promise<boolean> {
+    if (!sessionId || typeof sessionId !== "string") {
+      throw new AmplifierError(
+        "Session ID is required and must be a string",
+        ErrorCode.BadRequest
+      );
+    }
+    if (!requestId || typeof requestId !== "string") {
+      throw new AmplifierError(
+        "Request ID is required and must be a string",
+        ErrorCode.BadRequest
+      );
+    }
+    if (!choice || typeof choice !== "string") {
+      throw new AmplifierError(
+        "Choice is required and must be a string",
+        ErrorCode.BadRequest
+      );
+    }
     try {
       await this.request("POST", `/v1/session/${sessionId}/approval`, {
         request_id: requestId,

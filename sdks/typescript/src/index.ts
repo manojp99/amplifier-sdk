@@ -60,8 +60,22 @@ export type {
   BundleDefinition,
   ModuleConfig,
   AgentConfig,
+  // Client-side tools
+  ClientTool,
   // Observability types
   RequestInfo,
   ResponseInfo,
   StateChangeInfo,
+  // Typed events
+  BaseEvent,
+  ContentDeltaEvent,
+  ContentEndEvent,
+  ThinkingDeltaEvent,
+  ToolCallEvent,
+  ToolResultEvent,
+  ApprovalRequiredEvent,
+  AgentSpawnedEvent,
+  AgentCompletedEvent,
+  ErrorEvent,
+  GenericEvent,
 } from "./types";

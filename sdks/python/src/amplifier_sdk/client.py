@@ -72,6 +72,12 @@ class AmplifierClient:
         Client-side tools run in your app (not on the server) and give the AI
         access to your local APIs, databases, and services.
 
+        Args:
+            tool: ClientTool instance to register
+
+        Raises:
+            ValueError: If tool is invalid
+
         Example:
             ```python
             client.register_tool(ClientTool(
@@ -88,6 +94,15 @@ class AmplifierClient:
             ))
             ```
         """
+        if not isinstance(tool, ClientTool):
+            raise ValueError("Tool must be a ClientTool instance")
+        if not tool.name or not isinstance(tool.name, str):
+            raise ValueError("Tool name is required and must be a string")
+        if not tool.description or not isinstance(tool.description, str):
+            raise ValueError("Tool description is required and must be a string")
+        if not callable(tool.handler):
+            raise ValueError("Tool handler must be callable")
+
         self._client_tools[tool.name] = tool
 
     def unregister_tool(self, name: str) -> bool:
@@ -288,7 +303,13 @@ class AmplifierClient:
 
         Returns:
             SessionInfo
+
+        Raises:
+            ValueError: If session_id is invalid
         """
+        if not session_id or not isinstance(session_id, str):
+            raise ValueError("Session ID is required and must be a string")
+
         client = await self._get_client()
         response = await client.get(f"/v1/session/{session_id}")
         response.raise_for_status()
@@ -315,10 +336,38 @@ class AmplifierClient:
 
         Returns:
             True if deleted successfully
+
+        Raises:
+            ValueError: If session_id is invalid
         """
+        if not session_id or not isinstance(session_id, str):
+            raise ValueError("Session ID is required and must be a string")
+
         client = await self._get_client()
         response = await client.delete(f"/v1/session/{session_id}")
         return response.status_code == 200
+
+    async def cancel(self, session_id: str) -> bool:
+        """Cancel ongoing execution.
+
+        Args:
+            session_id: Session ID
+
+        Returns:
+            True if cancelled successfully
+
+        Raises:
+            ValueError: If session_id is invalid
+        """
+        if not session_id or not isinstance(session_id, str):
+            raise ValueError("Session ID is required and must be a string")
+
+        client = await self._get_client()
+        try:
+            response = await client.post(f"/v1/session/{session_id}/cancel")
+            return response.status_code == 200
+        except Exception:
+            return False
 
     async def resume_session(self, session_id: str) -> dict[str, Any]:
         """Resume a previous session (convenience method).
@@ -332,6 +381,9 @@ class AmplifierClient:
         Returns:
             Session object with helper methods
 
+        Raises:
+            ValueError: If session_id is invalid
+
         Example:
             ```python
             session = await client.resume_session("sess_abc123")
@@ -342,6 +394,9 @@ class AmplifierClient:
                     print(event.data.get("delta", ""), end="", flush=True)
             ```
         """
+        if not session_id or not isinstance(session_id, str):
+            raise ValueError("Session ID is required and must be a string")
+
         info = await self.get_session(session_id)
 
         return {
@@ -379,6 +434,9 @@ class AmplifierClient:
         Yields:
             Event objects as they arrive
 
+        Raises:
+            ValueError: If session_id or content is invalid
+
         Example:
             ```python
             async for event in client.prompt(session_id, "Hello!"):
@@ -390,6 +448,11 @@ class AmplifierClient:
                     print()  # Newline at end
             ```
         """
+        if not session_id or not isinstance(session_id, str):
+            raise ValueError("Session ID is required and must be a string")
+        if not content or not isinstance(content, str):
+            raise ValueError("Prompt content is required and must be a string")
+
         client = await self._get_client()
 
         async with client.stream(
@@ -497,12 +560,20 @@ class AmplifierClient:
         Returns:
             PromptResponse with complete content and tool calls
 
+        Raises:
+            ValueError: If session_id or content is invalid
+
         Example:
             ```python
             response = await client.prompt_sync(session_id, "What is 2+2?")
             print(response.content)  # "4"
             ```
         """
+        if not session_id or not isinstance(session_id, str):
+            raise ValueError("Session ID is required and must be a string")
+        if not content or not isinstance(content, str):
+            raise ValueError("Prompt content is required and must be a string")
+
         client = await self._get_client()
         response = await client.post(
             f"/v1/session/{session_id}/prompt/sync",
@@ -546,7 +617,17 @@ class AmplifierClient:
 
         Returns:
             True if response was accepted
+
+        Raises:
+            ValueError: If any parameter is invalid
         """
+        if not session_id or not isinstance(session_id, str):
+            raise ValueError("Session ID is required and must be a string")
+        if not request_id or not isinstance(request_id, str):
+            raise ValueError("Request ID is required and must be a string")
+        if not choice or not isinstance(choice, str):
+            raise ValueError("Choice is required and must be a string")
+
         client = await self._get_client()
         response = await client.post(
             f"/v1/session/{session_id}/approval",

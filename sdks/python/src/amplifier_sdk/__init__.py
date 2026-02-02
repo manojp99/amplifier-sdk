@@ -24,9 +24,13 @@ Example:
 from .client import AmplifierClient
 from .types import (
     ApprovalRequest,
+    BundleDefinition,
+    ClientTool,
     Event,
     EventType,
+    ModuleConfig,
     PromptResponse,
+    SessionConfig,
     SessionInfo,
     ToolCall,
 )
@@ -41,4 +45,8 @@ __all__ = [
     "PromptResponse",
     "ToolCall",
     "ApprovalRequest",
+    "ClientTool",
+    "BundleDefinition",
+    "ModuleConfig",
+    "SessionConfig",
 ]

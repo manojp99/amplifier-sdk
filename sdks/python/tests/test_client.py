@@ -224,6 +224,111 @@ class TestTypes:
         assert response.tool_calls[0].output == "4"
 
 
+class TestInputValidation:
+    """Test cases for input validation."""
+
+    @pytest.mark.asyncio
+    async def test_get_session_validates_session_id(self) -> None:
+        """Test get_session validates session_id."""
+        from amplifier_sdk import AmplifierClient
+
+        client = AmplifierClient()
+
+        with pytest.raises(ValueError, match="Session ID is required"):
+            await client.get_session("")
+
+        with pytest.raises(ValueError):
+            await client.get_session(None)  # type: ignore
+
+    @pytest.mark.asyncio
+    async def test_delete_session_validates_session_id(self) -> None:
+        """Test delete_session validates session_id."""
+        from amplifier_sdk import AmplifierClient
+
+        client = AmplifierClient()
+
+        with pytest.raises(ValueError, match="Session ID is required"):
+            await client.delete_session("")
+
+    @pytest.mark.asyncio
+    async def test_prompt_validates_parameters(self) -> None:
+        """Test prompt validates session_id and content."""
+        from amplifier_sdk import AmplifierClient
+
+        client = AmplifierClient()
+
+        # Invalid session_id
+        with pytest.raises(ValueError, match="Session ID is required"):
+            async for _ in client.prompt("", "test"):
+                break
+
+        # Invalid content
+        with pytest.raises(ValueError, match="content is required"):
+            async for _ in client.prompt("sess_123", ""):
+                break
+
+    @pytest.mark.asyncio
+    async def test_prompt_sync_validates_parameters(self) -> None:
+        """Test prompt_sync validates parameters."""
+        from amplifier_sdk import AmplifierClient
+
+        client = AmplifierClient()
+
+        with pytest.raises(ValueError, match="Session ID is required"):
+            await client.prompt_sync("", "test")
+
+        with pytest.raises(ValueError, match="content is required"):
+            await client.prompt_sync("sess_123", "")
+
+    @pytest.mark.asyncio
+    async def test_respond_approval_validates_parameters(self) -> None:
+        """Test respond_approval validates all parameters."""
+        from amplifier_sdk import AmplifierClient
+
+        client = AmplifierClient()
+
+        with pytest.raises(ValueError, match="Session ID is required"):
+            await client.respond_approval("", "req_1", "approve")
+
+        with pytest.raises(ValueError, match="Request ID is required"):
+            await client.respond_approval("sess_1", "", "approve")
+
+        with pytest.raises(ValueError, match="Choice is required"):
+            await client.respond_approval("sess_1", "req_1", "")
+
+    @pytest.mark.asyncio
+    async def test_resume_session_validates_session_id(self) -> None:
+        """Test resume_session validates session_id."""
+        from amplifier_sdk import AmplifierClient
+
+        client = AmplifierClient()
+
+        with pytest.raises(ValueError, match="Session ID is required"):
+            await client.resume_session("")
+
+    def test_register_tool_validates_tool(self) -> None:
+        """Test register_tool validates tool parameter."""
+        from amplifier_sdk import AmplifierClient, ClientTool
+
+        client = AmplifierClient()
+
+        # Invalid tool object
+        with pytest.raises(ValueError, match="must be a ClientTool"):
+            client.register_tool(None)  # type: ignore
+
+        # Invalid name
+        with pytest.raises(ValueError, match="name is required"):
+            client.register_tool(ClientTool(name="", description="test", handler=lambda x: x))
+
+        # Invalid description
+        with pytest.raises(ValueError, match="description is required"):
+            client.register_tool(ClientTool(name="test", description="", handler=lambda x: x))
+
+        # Invalid handler
+        with pytest.raises(ValueError, match="handler must be callable"):
+            client.register_tool(ClientTool(name="test", description="test", handler=None))  # type: ignore
+
+
 class TestSessionResume:
     """Test cases for session resume functionality."""
 
