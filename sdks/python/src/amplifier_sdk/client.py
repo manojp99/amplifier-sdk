@@ -59,6 +59,8 @@ class AmplifierClient:
         self.timeout = timeout
         self._client: httpx.AsyncClient | None = None
         self._client_tools: dict[str, ClientTool] = {}
+        self._event_handlers: dict[str, list[Any]] = {}
+        self._approval_handler: Any = None
 
     # =========================================================================
     # Client-Side Tools
@@ -154,6 +156,68 @@ class AmplifierClient:
     async def __aexit__(self, *args: Any) -> None:
         """Async context manager exit."""
         await self.close()
+
+    # =========================================================================
+    # Event Handlers (Convenience API)
+    # =========================================================================
+
+    def on(self, event_type: str, handler: Any) -> None:
+        """Register an event handler.
+
+        Example:
+            ```python
+            client.on("tool.call", lambda event: print(f"Tool: {event.data['tool_name']}"))
+            client.on("content.delta", lambda event: print(event.data["delta"], end=""))
+            ```
+        """
+        if event_type not in self._event_handlers:
+            self._event_handlers[event_type] = []
+        self._event_handlers[event_type].append(handler)
+
+    def off(self, event_type: str, handler: Any) -> None:
+        """Unregister an event handler."""
+        if event_type in self._event_handlers:
+            try:
+                self._event_handlers[event_type].remove(handler)
+            except ValueError:
+                pass
+
+    def once(self, event_type: str, handler: Any) -> None:
+        """Register a one-time event handler."""
+
+        def wrapped_handler(event: Event) -> None:
+            handler(event)
+            self.off(event_type, wrapped_handler)
+
+        self.on(event_type, wrapped_handler)
+
+    async def _emit_event(self, event: Event) -> None:
+        """Emit event to registered handlers."""
+        handlers = self._event_handlers.get(event.type, [])
+        for handler in handlers:
+            try:
+                result = handler(event)
+                if hasattr(result, "__await__"):
+                    await result
+            except Exception as err:
+                print(f"Event handler error for {event.type}: {err}")
+
+    def on_approval(self, handler: Any) -> None:
+        """Register approval handler (convenience method).
+
+        When the AI requests approval, your handler will be called automatically.
+        Return True to approve, False to deny.
+
+        Example:
+            ```python
+            async def handle_approval(request):
+                user_choice = await show_dialog(request["prompt"])
+                return user_choice
+
+            client.on_approval(handle_approval)
+            ```
+        """
+        self._approval_handler = handler
 
     # =========================================================================
     # Health & Capabilities
@@ -345,6 +409,36 @@ class AmplifierClient:
 
                                     # Don't yield the tool.call event - it's handled
                                     continue
+
+                            # Handle approval requests with registered handler
+                            if event.type == "approval.required" and self._approval_handler:
+                                request_id = event.data.get("request_id", "")
+                                prompt = event.data.get("prompt", "")
+                                tool_name = event.data.get("tool_name")
+                                args = event.data.get("arguments")
+
+                                try:
+                                    request_data = {
+                                        "requestId": request_id,
+                                        "prompt": prompt,
+                                        "toolName": tool_name,
+                                        "arguments": args,
+                                    }
+
+                                    # Call approval handler
+                                    approved = self._approval_handler(request_data)
+                                    if hasattr(approved, "__await__"):
+                                        approved = await approved
+
+                                    # Auto-respond to approval
+                                    await self.respond_approval(
+                                        session_id, request_id, str(approved).lower()
+                                    )
+                                except Exception as err:
+                                    print(f"Approval handler error: {err}")
+
+                            # Emit to registered event handlers
+                            await self._emit_event(event)
 
                             yield event
                         except json.JSONDecodeError:
