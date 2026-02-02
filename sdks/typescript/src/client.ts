@@ -200,6 +200,36 @@ export class AmplifierClient {
   }
 
   /**
+   * Resume a previous session (convenience method).
+   * 
+   * This is a convenience wrapper that fetches session info and provides
+   * helper methods for continuing the conversation.
+   * 
+   * @example
+   * ```typescript
+   * const session = await client.resumeSession("sess_abc123");
+   * 
+   * // Continue the conversation
+   * for await (const event of session.send("Where were we?")) {
+   *   if (event.type === "content.delta") {
+   *     process.stdout.write(event.data.delta);
+   *   }
+   * }
+   * ```
+   */
+  async resumeSession(sessionId: string) {
+    const info = await this.getSession(sessionId);
+    
+    return {
+      ...info,
+      send: (content: string) => this.prompt(sessionId, content),
+      sendSync: (content: string) => this.promptSync(sessionId, content),
+      cancel: () => this.cancel(sessionId),
+      delete: () => this.deleteSession(sessionId),
+    };
+  }
+
+  /**
    * Delete a session.
    */
   async deleteSession(sessionId: string): Promise<boolean> {

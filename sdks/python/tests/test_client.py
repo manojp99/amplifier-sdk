@@ -222,3 +222,61 @@ class TestTypes:
         assert len(response.tool_calls) == 1
         assert response.tool_calls[0].tool_name == "calculator"
         assert response.tool_calls[0].output == "4"
+
+
+class TestSessionResume:
+    """Test cases for session resume functionality."""
+
+    @pytest.mark.asyncio
+    async def test_resume_session(self) -> None:
+        """Test resuming a session."""
+        from amplifier_sdk import AmplifierClient
+
+        client = AmplifierClient()
+
+        mock_session_data = {
+            "id": "sess_123",
+            "title": "Previous Session",
+            "state": "ready",
+            "created_at": "2024-01-01T00:00:00Z",
+        }
+
+        with patch("httpx.AsyncClient.get") as mock_get:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.raise_for_status = MagicMock()
+            mock_response.json.return_value = mock_session_data
+            mock_get.return_value = mock_response
+
+            session = await client.resume_session("sess_123")
+
+            assert session["id"] == "sess_123"
+            assert session["title"] == "Previous Session"
+            assert session["state"] == "ready"
+            assert "send" in session
+            assert "send_sync" in session
+            assert "cancel" in session
+            assert "delete" in session
+
+    @pytest.mark.asyncio
+    async def test_resume_session_provides_working_send_method(self) -> None:
+        """Test that resumed session send method works."""
+        from amplifier_sdk import AmplifierClient
+
+        client = AmplifierClient()
+
+        with patch("httpx.AsyncClient.get") as mock_get:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.raise_for_status = MagicMock()
+            mock_response.json.return_value = {"id": "sess_123", "state": "ready"}
+            mock_get.return_value = mock_response
+
+            session = await client.resume_session("sess_123")
+
+            # Verify send method exists and is callable
+            assert callable(session["send"])
+
+            # session["send"] returns an async generator
+            result = session["send"]("Continue")
+            assert hasattr(result, "__aiter__")

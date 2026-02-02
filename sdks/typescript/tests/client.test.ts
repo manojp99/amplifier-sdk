@@ -246,6 +246,66 @@ describe("AmplifierClient", () => {
     });
   });
 
+  describe("resumeSession", () => {
+    it("should resume a session and provide helper methods", async () => {
+      const mockSessionData = {
+        id: "sess_123",
+        title: "Previous Session",
+        state: "ready",
+        created_at: "2024-01-01T00:00:00Z",
+      };
+
+      mockFetch.mockResolvedValueOnce(createMockResponse({
+        ok: true,
+        json: () => Promise.resolve(mockSessionData),
+      }));
+
+      const session = await client.resumeSession("sess_123");
+
+      expect(session.id).toBe("sess_123");
+      expect(session.title).toBe("Previous Session");
+      expect(session.state).toBe("ready");
+      expect(typeof session.send).toBe("function");
+      expect(typeof session.sendSync).toBe("function");
+      expect(typeof session.cancel).toBe("function");
+      expect(typeof session.delete).toBe("function");
+    });
+
+    it("should provide working send method", async () => {
+      // Mock getSession
+      mockFetch.mockResolvedValueOnce(createMockResponse({
+        ok: true,
+        json: () => Promise.resolve({ id: "sess_123", state: "ready" }),
+      }));
+
+      const session = await client.resumeSession("sess_123");
+
+      // session.send should return an async generator
+      expect(typeof session.send).toBe("function");
+      const generator = session.send("Continue");
+      expect(generator[Symbol.asyncIterator]).toBeDefined();
+    });
+
+    it("should provide working sendSync method", async () => {
+      // Mock getSession
+      mockFetch.mockResolvedValueOnce(createMockResponse({
+        ok: true,
+        json: () => Promise.resolve({ id: "sess_123", state: "ready" }),
+      }));
+
+      // Mock promptSync
+      mockFetch.mockResolvedValueOnce(createMockResponse({
+        ok: true,
+        json: () => Promise.resolve({ content: "Resumed!", tool_calls: [] }),
+      }));
+
+      const session = await client.resumeSession("sess_123");
+      const response = await session.sendSync("Continue");
+
+      expect(response.content).toBe("Resumed!");
+    });
+  });
+
   describe("Event Type Safety", () => {
     it("should properly type content.delta events", () => {
       const event = {

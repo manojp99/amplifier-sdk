@@ -320,6 +320,42 @@ class AmplifierClient:
         response = await client.delete(f"/v1/session/{session_id}")
         return response.status_code == 200
 
+    async def resume_session(self, session_id: str) -> dict[str, Any]:
+        """Resume a previous session (convenience method).
+
+        This is a convenience wrapper that fetches session info and provides
+        helper methods for continuing the conversation.
+
+        Args:
+            session_id: Session ID to resume
+
+        Returns:
+            Session object with helper methods
+
+        Example:
+            ```python
+            session = await client.resume_session("sess_abc123")
+
+            # Continue the conversation
+            async for event in session["send"]("Where were we?"):
+                if event.type == "content.delta":
+                    print(event.data.get("delta", ""), end="", flush=True)
+            ```
+        """
+        info = await self.get_session(session_id)
+
+        return {
+            "id": info.id,
+            "title": info.title,
+            "state": info.state,
+            "created_at": info.created_at,
+            "updated_at": info.updated_at,
+            "send": lambda content: self.prompt(session_id, content),
+            "send_sync": lambda content: self.prompt_sync(session_id, content),
+            "cancel": lambda: self.cancel(session_id),
+            "delete": lambda: self.delete_session(session_id),
+        }
+
     # =========================================================================
     # Prompt Execution
     # =========================================================================
