@@ -65,6 +65,28 @@ stages:
         output: "sdk_implementation_results"
         timeout: 3600
 
+      - id: "commit-and-push-implementation"
+        agent: "foundation:git-ops"
+        prompt: |
+          Commit and push the SDK implementation changes for {{feature_name}}.
+          
+          Working directory: {{workspace_dir}}
+          
+          Tasks:
+          1. Create a commit with all changes from the implementation stage
+             Commit message: "feat: implement {{feature_name}} in SDK"
+             
+             Include in commit body:
+             - Brief description of what was implemented
+             - Both TypeScript and Python SDK changes
+             - Unit tests added
+          
+          2. Push the commit to origin/main
+          
+          Report the commit hash and push status.
+        output: "implementation_commit"
+        timeout: 300
+
   # Stage 3: Playground Integration (conditional)
   # Integrate feature in playground and run integration tests
   - name: "playground"
@@ -83,6 +105,27 @@ stages:
           workspace_dir: "{{workspace_dir}}"
         output: "playground_results"
         timeout: 3600
+
+      - id: "commit-and-push-playground"
+        agent: "foundation:git-ops"
+        prompt: |
+          Commit and push the playground integration changes for {{feature_name}}.
+          
+          Working directory: {{workspace_dir}}
+          
+          Tasks:
+          1. Create a commit with all changes from the playground integration stage
+             Commit message: "feat: integrate {{feature_name}} in playground"
+             
+             Include in commit body:
+             - Description of playground examples added
+             - Integration tests run and results
+          
+          2. Push the commit to origin/main
+          
+          Report the commit hash and push status.
+        output: "playground_commit"
+        timeout: 300
 
   # Stage 4: Documentation (conditional)
   # Update SDK documentation for the new feature
@@ -103,88 +146,87 @@ stages:
         output: "documentation_results"
         timeout: 3600
 
-  # Stage 5: Final Review and Commit
-  # User reviews all changes, then create quality commits
+      - id: "commit-and-push-documentation"
+        agent: "foundation:git-ops"
+        prompt: |
+          Commit and push the documentation updates for {{feature_name}}.
+          
+          Working directory: {{workspace_dir}}
+          
+          Tasks:
+          1. Create a commit with all changes from the documentation stage
+             Commit message: "docs: document {{feature_name}}"
+             
+             Include in commit body:
+             - What documentation was added or updated
+             - API references, usage examples, guides
+          
+          2. Push the commit to origin/main
+          
+          Report the commit hash and push status.
+        output: "documentation_commit"
+        timeout: 300
+
+  # Stage 5: Finalization
+  # Final summary and verification (commits already pushed continuously)
   - name: "finalization"
-    description: "Review all changes and create commits"
+    description: "Final summary and verification"
     steps:
-      - id: "summarize-changes"
+      - id: "summarize-workflow"
         agent: "foundation:zen-architect"
         mode: "ANALYZE"
         prompt: |
-          Summarize all changes made during this feature development:
+          Provide a comprehensive summary of the {{feature_name}} feature development workflow.
           
           Feature: {{feature_name}}
           Specification: {{feature_spec}}
           
-          SDK Implementation: {{sdk_implementation_results}}
+          Stages Completed:
+          1. SDK Implementation: {{sdk_implementation_results}}
+             Committed: {{implementation_commit}}
+          
           {{#if needs_playground}}
-          Playground Integration: {{playground_results}}
+          2. Playground Integration: {{playground_results}}
+             Committed: {{playground_commit}}
           {{/if}}
+          
           {{#if needs_docs}}
-          Documentation: {{documentation_results}}
+          3. Documentation: {{documentation_results}}
+             Committed: {{documentation_commit}}
           {{/if}}
           
-          Provide a comprehensive summary of:
-          1. What was implemented
-          2. What files were changed
-          3. What tests were created
-          4. What documentation was updated
-          5. Any issues encountered and how they were resolved
+          Summarize:
+          1. What was implemented in each stage
+          2. All commits created and pushed
+          3. Test results and quality checks
+          4. Files changed across all stages
+          5. Complete feature status
           
-          Format this as a clear overview for commit message generation.
-        output: "change_summary"
+          This is the final summary for the user showing all work completed.
+        output: "workflow_summary"
         timeout: 300
-
-      - id: "create-commits"
-        agent: "foundation:git-ops"
-        prompt: |
-          Create high-quality git commits for the {{feature_name}} feature development.
-          
-          Change summary: {{change_summary}}
-          
-          Working directory: {{workspace_dir}}
-          
-          Requirements:
-          - Create logical, atomic commits (not one giant commit)
-          - Follow conventional commit format (feat:, docs:, test:, etc.)
-          - Write clear, descriptive commit messages
-          - Include relevant details in commit body
-          - Reference the feature specification in commits
-          
-          Suggested commit structure:
-          1. feat(sdk): implement {{feature_name}} in TypeScript SDK
-          2. feat(sdk): implement {{feature_name}} in Python SDK
-          3. test: add unit tests for {{feature_name}}
-          {{#if needs_playground}}
-          4. feat(playground): integrate {{feature_name}} examples
-          {{/if}}
-          {{#if needs_docs}}
-          5. docs: add {{feature_name}} documentation
-          {{/if}}
-          
-          Create commits and report what was committed.
-        output: "commit_results"
-        timeout: 600
 
       - id: "final-verification"
         agent: "foundation:zen-architect"
         mode: "ANALYZE"
         prompt: |
-          Verify that the feature development workflow completed successfully.
+          Verify that the {{feature_name}} feature development completed successfully.
           
           Feature: {{feature_name}}
-          Change summary: {{change_summary}}
-          Commits: {{commit_results}}
+          Workflow summary: {{workflow_summary}}
           
           Verify:
-          1. All planned work was completed
-          2. Tests are passing
-          3. Documentation is complete
-          4. Commits were created successfully
-          5. No outstanding issues or errors
+          1. ✅ All planned stages completed
+          2. ✅ All tests passing
+          3. ✅ All changes committed and pushed continuously
+          4. ✅ Documentation complete (if applicable)
+          5. ✅ No outstanding issues or errors
           
-          Provide a final verification report confirming completion or identifying any remaining issues.
+          Provide final verification confirming:
+          - Feature is fully implemented and tested
+          - All commits are pushed to origin/main
+          - Workflow completed without errors
+          - Any next steps or recommendations
         output: "final_verification"
         timeout: 300
 
