@@ -61,6 +61,8 @@ class Event:
     - correlation_id: Links to the originating command
     - sequence: Position in the stream
     - final: True if this is the last event
+    - tool_call_id: For correlating tool.call with tool.result events
+    - agent_id: Identifies which agent emitted this event (parent vs child)
     """
 
     type: str
@@ -70,18 +72,24 @@ class Event:
     sequence: int | None = None
     final: bool = False
     timestamp: str = ""
+    tool_call_id: str | None = None
+    agent_id: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Event:
         """Create an Event from a dictionary."""
+        event_data = data.get("data", {})
         return cls(
             type=data.get("type", ""),
-            data=data.get("data", {}),
+            data=event_data,
             id=data.get("id", ""),
             correlation_id=data.get("correlation_id"),
             sequence=data.get("sequence"),
             final=data.get("final", False),
             timestamp=data.get("timestamp", ""),
+            # Extract correlation fields from event data
+            tool_call_id=event_data.get("tool_call_id"),
+            agent_id=event_data.get("agent_id"),
         )
 
     def is_error(self) -> bool:

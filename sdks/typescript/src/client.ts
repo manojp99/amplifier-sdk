@@ -521,6 +521,10 @@ export class AmplifierClient {
       sequence: data.sequence as number | undefined,
       final: (data.final ?? false) as boolean,
       timestamp: data.timestamp as string | undefined,
+      // Extract tool_call_id from data for correlation
+      toolCallId: eventData.tool_call_id as string | undefined,
+      // Extract agent_id from data for parent/child distinction
+      agentId: eventData.agent_id as string | undefined,
     };
 
     // Server sends full content in content.end - emit synthetic content.delta for streaming UX

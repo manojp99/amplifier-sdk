@@ -164,17 +164,152 @@ export enum EventType {
 }
 
 /**
- * SSE event from the server.
+ * Base event properties shared across all event types.
  */
-export interface Event {
+export interface BaseEvent {
+  /** Event ID for deduplication */
+  id?: string;
+  /** Correlation ID for tracing related events */
+  correlationId?: string;
+  /** Sequence number in the stream */
+  sequence?: number;
+  /** Whether this is the final event */
+  final?: boolean;
+  /** ISO timestamp */
+  timestamp?: string;
+  /** Tool call ID (for tool.call and tool.result correlation) */
+  toolCallId?: string;
+  /** Agent ID that emitted this event (parent vs child distinction) */
+  agentId?: string;
+}
+
+/**
+ * Content delta event - incremental text content.
+ */
+export interface ContentDeltaEvent extends BaseEvent {
+  type: "content.delta";
+  data: {
+    delta: string;
+  };
+}
+
+/**
+ * Content end event - marks completion of content streaming.
+ */
+export interface ContentEndEvent extends BaseEvent {
+  type: "content.end";
+  data: Record<string, unknown>;
+}
+
+/**
+ * Thinking delta event - incremental reasoning/thinking content.
+ */
+export interface ThinkingDeltaEvent extends BaseEvent {
+  type: "thinking.delta";
+  data: {
+    delta: string;
+  };
+}
+
+/**
+ * Tool call event - agent is calling a tool.
+ */
+export interface ToolCallEvent extends BaseEvent {
+  type: "tool.call";
+  data: {
+    tool_name: string;
+    tool_call_id?: string;
+    arguments: Record<string, unknown>;
+  };
+  toolCallId: string;
+}
+
+/**
+ * Tool result event - tool execution completed.
+ */
+export interface ToolResultEvent extends BaseEvent {
+  type: "tool.result";
+  data: {
+    tool_name?: string;
+    tool_call_id?: string;
+    result: unknown;
+    error?: string;
+  };
+  toolCallId: string;
+}
+
+/**
+ * Approval required event - agent needs user permission.
+ */
+export interface ApprovalRequiredEvent extends BaseEvent {
+  type: "approval.required";
+  data: {
+    request_id: string;
+    prompt: string;
+    tool_name?: string;
+    arguments?: Record<string, unknown>;
+  };
+}
+
+/**
+ * Agent spawned event - sub-agent started.
+ */
+export interface AgentSpawnedEvent extends BaseEvent {
+  type: "agent.spawned";
+  data: {
+    agent_id: string;
+    agent_name: string;
+    parent_id?: string;
+  };
+}
+
+/**
+ * Agent completed event - sub-agent finished.
+ */
+export interface AgentCompletedEvent extends BaseEvent {
+  type: "agent.completed";
+  data: {
+    agent_id: string;
+    result?: string;
+    error?: string;
+  };
+}
+
+/**
+ * Error event.
+ */
+export interface ErrorEvent extends BaseEvent {
+  type: "error";
+  data: {
+    error: string;
+    code?: string;
+    details?: Record<string, unknown>;
+  };
+}
+
+/**
+ * Generic event for unknown/future event types.
+ */
+export interface GenericEvent extends BaseEvent {
   type: string;
   data: Record<string, unknown>;
-  id?: string;
-  correlationId?: string;
-  sequence?: number;
-  final?: boolean;
-  timestamp?: string;
 }
+
+/**
+ * All possible SSE events from the server.
+ * Discriminated union enables type-safe event handling.
+ */
+export type Event =
+  | ContentDeltaEvent
+  | ContentEndEvent
+  | ThinkingDeltaEvent
+  | ToolCallEvent
+  | ToolResultEvent
+  | ApprovalRequiredEvent
+  | AgentSpawnedEvent
+  | AgentCompletedEvent
+  | ErrorEvent
+  | GenericEvent;
 
 /**
  * Module definition for providers, tools, hooks.
