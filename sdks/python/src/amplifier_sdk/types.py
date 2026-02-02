@@ -223,6 +223,19 @@ class AgentConfig:
 
 
 @dataclass
+class ClientTool:
+    """Client-side tool definition.
+
+    Tools registered with the SDK run locally in the app, not on the server.
+    """
+
+    name: str
+    description: str
+    handler: Any  # Callable[[dict[str, Any]], Any] - avoid import issues
+    parameters: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class BundleDefinition:
     """Runtime bundle definition.
 
@@ -237,6 +250,7 @@ class BundleDefinition:
                 ModuleConfig(module="tool-filesystem"),
                 ModuleConfig(module="tool-web"),
             ],
+            client_tools=["custom-tool"],  # SDK-handled tools
             instructions="You are a helpful coding assistant.",
         )
         session = await client.create_session(bundle=bundle)
@@ -247,6 +261,7 @@ class BundleDefinition:
     description: str | None = None
     providers: list[ModuleConfig] = field(default_factory=list)
     tools: list[ModuleConfig] = field(default_factory=list)
+    client_tools: list[str] = field(default_factory=list)
     hooks: list[ModuleConfig] = field(default_factory=list)
     orchestrator: ModuleConfig | None = None
     context: ModuleConfig | None = None

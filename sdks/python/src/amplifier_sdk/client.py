@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 
 from .types import (
+    ClientTool,
     Event,
     PromptResponse,
     SessionConfig,
@@ -57,6 +58,78 @@ class AmplifierClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self._client: httpx.AsyncClient | None = None
+        self._client_tools: dict[str, ClientTool] = {}
+
+    # =========================================================================
+    # Client-Side Tools
+    # =========================================================================
+
+    def register_tool(self, tool: ClientTool) -> None:
+        """Register a client-side tool.
+
+        Client-side tools run in your app (not on the server) and give the AI
+        access to your local APIs, databases, and services.
+
+        Example:
+            ```python
+            client.register_tool(ClientTool(
+                name="get-customer",
+                description="Get customer information by ID",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "customerId": {"type": "string"}
+                    },
+                    "required": ["customerId"]
+                },
+                handler=lambda args: get_customer(args["customerId"])
+            ))
+            ```
+        """
+        self._client_tools[tool.name] = tool
+
+    def unregister_tool(self, name: str) -> bool:
+        """Unregister a client-side tool.
+
+        Args:
+            name: Tool name to remove
+
+        Returns:
+            True if tool was removed, False if not found
+        """
+        return self._client_tools.pop(name, None) is not None
+
+    def get_client_tools(self) -> list[ClientTool]:
+        """Get all registered client-side tools.
+
+        Returns:
+            List of registered client tools
+        """
+        return list(self._client_tools.values())
+
+    async def _execute_client_tool(self, tool_name: str, args: dict[str, Any]) -> Any:
+        """Execute a client-side tool handler.
+
+        Args:
+            tool_name: Name of the tool to execute
+            args: Tool arguments
+
+        Returns:
+            Tool execution result
+
+        Raises:
+            KeyError: If tool not found
+            Exception: If tool execution fails
+        """
+        tool = self._client_tools.get(tool_name)
+        if tool is None:
+            raise KeyError(f"Client tool not found: {tool_name}")
+
+        # Execute the handler (may be async or sync)
+        result = tool.handler(args)
+        if hasattr(result, "__await__"):
+            return await result
+        return result
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create HTTP client."""
@@ -238,7 +311,42 @@ class AmplifierClient:
                     if data_str:
                         try:
                             data = json.loads(data_str)
-                            yield Event.from_dict(data)
+                            event = Event.from_dict(data)
+
+                            # Intercept client-side tool calls
+                            if event.type == "tool.call":
+                                tool_name = event.data.get("tool_name", "")
+                                tool_call_id = event.tool_call_id or event.data.get("tool_call_id")
+
+                                # Check if this is a client-side tool
+                                if tool_name in self._client_tools:
+                                    # Execute tool locally
+                                    try:
+                                        args = event.data.get("arguments", {})
+                                        result = await self._execute_client_tool(tool_name, args)
+
+                                        # Send result back to server
+                                        await client.post(
+                                            f"/v1/session/{session_id}/tool-result",
+                                            json={
+                                                "tool_call_id": tool_call_id,
+                                                "result": result,
+                                            },
+                                        )
+                                    except Exception as err:
+                                        # Send error back to server
+                                        await client.post(
+                                            f"/v1/session/{session_id}/tool-result",
+                                            json={
+                                                "tool_call_id": tool_call_id,
+                                                "error": str(err),
+                                            },
+                                        )
+
+                                    # Don't yield the tool.call event - it's handled
+                                    continue
+
+                            yield event
                         except json.JSONDecodeError:
                             continue
 

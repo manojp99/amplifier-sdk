@@ -12,6 +12,7 @@ import {
   ErrorCode,
   type Capabilities,
   type ClientConfig,
+  type ClientTool,
   type Event,
   type PromptResponse,
   type RequestInfo,
@@ -59,6 +60,7 @@ export class AmplifierClient {
   private readonly baseUrl: string;
   private readonly timeout: number;
   private _connectionState: ConnectionState = ConnectionState.Disconnected;
+  private readonly clientTools: Map<string, ClientTool> = new Map();
 
   constructor(config: ClientConfig = {}) {
     this.config = config;
@@ -293,6 +295,44 @@ export class AmplifierClient {
             for (const event of this.parseEvent(data)) {
               this.debug(`[${requestId}] Event: ${event.type}`);
               this.config.onEvent?.(event);
+              
+              // Intercept client-side tool calls
+              if (event.type === "tool.call") {
+                const toolName = event.data.tool_name as string;
+                const toolCallId = event.toolCallId || (event.data.tool_call_id as string);
+                
+                // Check if this is a client-side tool
+                if (this.clientTools.has(toolName)) {
+                  this.debug(`[${requestId}] Intercepting client-side tool: ${toolName}`);
+                  
+                  // Execute the tool locally
+                  try {
+                    const args = (event.data.arguments as Record<string, unknown>) || {};
+                    const result = await this.executeClientTool(toolName, args);
+                    
+                    // Send result back to server
+                    await this.request("POST", `/v1/session/${sessionId}/tool-result`, {
+                      tool_call_id: toolCallId,
+                      result,
+                    });
+                    
+                    this.debug(`[${requestId}] Client-side tool result sent: ${toolName}`);
+                  } catch (err) {
+                    const error = err as Error;
+                    this.debug(`[${requestId}] Client-side tool error: ${toolName} - ${error.message}`);
+                    
+                    // Send error back to server
+                    await this.request("POST", `/v1/session/${sessionId}/tool-result`, {
+                      tool_call_id: toolCallId,
+                      error: error.message,
+                    });
+                  }
+                  
+                  // Don't yield the tool.call event - it's handled
+                  continue;
+                }
+              }
+              
               yield event;
             }
           } catch {
@@ -326,6 +366,80 @@ export class AmplifierClient {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  // ===========================================================================
+  // Client-Side Tools
+  // ===========================================================================
+
+  /**
+   * Register a client-side tool.
+   * 
+   * Client-side tools run in your app (not on the server) and give the AI
+   * access to your local APIs, databases, and services.
+   * 
+   * @example
+   * ```typescript
+   * client.registerTool({
+   *   name: "get-customer",
+   *   description: "Get customer information by ID",
+   *   parameters: {
+   *     type: "object",
+   *     properties: {
+   *       customerId: { type: "string" }
+   *     },
+   *     required: ["customerId"]
+   *   },
+   *   handler: async ({ customerId }) => {
+   *     return await yourAPI.getCustomer(customerId);
+   *   }
+   * });
+   * ```
+   */
+  registerTool(tool: ClientTool): void {
+    this.clientTools.set(tool.name, tool);
+    this.debug(`Registered client-side tool: ${tool.name}`);
+  }
+
+  /**
+   * Unregister a client-side tool.
+   */
+  unregisterTool(name: string): boolean {
+    const removed = this.clientTools.delete(name);
+    if (removed) {
+      this.debug(`Unregistered client-side tool: ${name}`);
+    }
+    return removed;
+  }
+
+  /**
+   * Get all registered client-side tools.
+   */
+  getClientTools(): ClientTool[] {
+    return Array.from(this.clientTools.values());
+  }
+
+  /**
+   * Execute a client-side tool handler.
+   */
+  private async executeClientTool(
+    toolName: string,
+    args: Record<string, unknown>
+  ): Promise<unknown> {
+    const tool = this.clientTools.get(toolName);
+    if (!tool) {
+      throw new Error(`Client tool not found: ${toolName}`);
+    }
+
+    try {
+      this.debug(`Executing client-side tool: ${toolName}`);
+      const result = await tool.handler(args);
+      return result;
+    } catch (err) {
+      const error = err as Error;
+      this.debug(`Client tool error: ${toolName} - ${error.message}`);
+      throw error;
     }
   }
 

@@ -353,8 +353,10 @@ export interface BundleDefinition {
   
   /** Provider modules to load */
   providers?: ModuleConfig[];
-  /** Tool modules to load */
+  /** Tool modules to load (server-side) */
   tools?: ModuleConfig[];
+  /** Client-side tools (handled by SDK, not server) */
+  clientTools?: string[];
   /** Hook modules to load */
   hooks?: ModuleConfig[];
   /** Orchestrator module */
@@ -467,6 +469,25 @@ export interface Capabilities {
   tools: string[];
   providers: string[];
   features: string[];
+}
+
+/**
+ * Client-side tool definition.
+ * Tools registered with the SDK run locally in the app, not on the server.
+ */
+export interface ClientTool {
+  /** Tool name (must match what's in bundle.clientTools) */
+  name: string;
+  /** Tool description for AI */
+  description: string;
+  /** Parameter schema (JSON Schema) */
+  parameters?: {
+    type: "object";
+    properties: Record<string, unknown>;
+    required?: string[];
+  };
+  /** Handler function that executes the tool */
+  handler: (args: Record<string, unknown>) => Promise<unknown> | unknown;
 }
 
 /**

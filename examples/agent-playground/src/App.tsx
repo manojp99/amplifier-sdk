@@ -59,12 +59,26 @@ Always cite your sources and be objective.`,
 Adapt your teaching style to the student's level.`,
     tools: [],
   },
+  "demo-client-tools": {
+    name: "demo-client-tools",
+    instructions: `You are a demo assistant showing off client-side tools.
+
+You have access to these LOCAL tools (run in the browser, not on server):
+- get-time: Get current time in a specific timezone
+- calculate: Perform calculations
+- get-random: Get a random number in a range
+
+Use these tools when asked to demonstrate client-side tool execution!`,
+    tools: [],
+    clientTools: ["get-time", "calculate", "get-random"],
+  },
 };
 
 interface AgentConfig {
   name: string;
   instructions: string;
   tools: string[];
+  clientTools?: string[];
   provider?: string;
   model?: string;
 }
@@ -109,6 +123,92 @@ const client = new AmplifierClient({
   },
   onError: (err) => {
     console.error(`[Error] ${err.code}: ${err.message}`);
+  },
+});
+
+// Register demo client-side tools
+client.registerTool({
+  name: "get-time",
+  description: "Get current time in a specific timezone",
+  parameters: {
+    type: "object",
+    properties: {
+      timezone: { 
+        type: "string",
+        description: "Timezone (e.g., 'America/New_York', 'Europe/London', 'Asia/Tokyo')"
+      },
+    },
+    required: ["timezone"],
+  },
+  handler: async ({ timezone }) => {
+    const now = new Date();
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone as string,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: true,
+    });
+    return {
+      timezone,
+      time: formatter.format(now),
+      timestamp: now.toISOString(),
+    };
+  },
+});
+
+client.registerTool({
+  name: "calculate",
+  description: "Perform mathematical calculations",
+  parameters: {
+    type: "object",
+    properties: {
+      expression: {
+        type: "string",
+        description: "Math expression to evaluate (e.g., '2 + 2', '10 * 5')",
+      },
+    },
+    required: ["expression"],
+  },
+  handler: async ({ expression }) => {
+    try {
+      // Safe eval for basic math (in real app, use math.js or similar)
+      const result = Function(`"use strict"; return (${expression})`)();
+      return {
+        expression,
+        result,
+        valid: true,
+      };
+    } catch (error) {
+      return {
+        expression,
+        error: (error as Error).message,
+        valid: false,
+      };
+    }
+  },
+});
+
+client.registerTool({
+  name: "get-random",
+  description: "Generate a random number within a range",
+  parameters: {
+    type: "object",
+    properties: {
+      min: { type: "number", description: "Minimum value" },
+      max: { type: "number", description: "Maximum value" },
+    },
+    required: ["min", "max"],
+  },
+  handler: async ({ min, max }) => {
+    const minNum = Number(min);
+    const maxNum = Number(max);
+    const random = Math.floor(Math.random() * (maxNum - minNum + 1)) + minNum;
+    return {
+      min: minNum,
+      max: maxNum,
+      result: random,
+    };
   },
 });
 
@@ -188,6 +288,11 @@ function App() {
         instructions: config.instructions,
         tools: [...config.tools, ...customTools].map((t) => ({ module: t })),
       };
+
+      // Add client-side tools if specified
+      if (config.clientTools && config.clientTools.length > 0) {
+        bundle.clientTools = config.clientTools;
+      }
 
       // Add provider config if specified
       if (config.provider) {

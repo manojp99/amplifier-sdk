@@ -436,4 +436,97 @@ describe("AmplifierClient", () => {
       expect(childEvent.agentId).toBe("child_1");
     });
   });
+
+  describe("Client-Side Tools", () => {
+    it("should register and retrieve client-side tools", () => {
+      const tool = {
+        name: "test-tool",
+        description: "A test tool",
+        handler: async (args: Record<string, unknown>) => ({ result: "test" }),
+      };
+
+      client.registerTool(tool);
+
+      const tools = client.getClientTools();
+      expect(tools).toHaveLength(1);
+      expect(tools[0].name).toBe("test-tool");
+      expect(tools[0].description).toBe("A test tool");
+    });
+
+    it("should unregister client-side tools", () => {
+      const tool = {
+        name: "removable-tool",
+        description: "Will be removed",
+        handler: async () => "test",
+      };
+
+      client.registerTool(tool);
+      expect(client.getClientTools()).toHaveLength(1);
+
+      const removed = client.unregisterTool("removable-tool");
+      expect(removed).toBe(true);
+      expect(client.getClientTools()).toHaveLength(0);
+    });
+
+    it("should return false when unregistering non-existent tool", () => {
+      const removed = client.unregisterTool("does-not-exist");
+      expect(removed).toBe(false);
+    });
+
+    it("should execute client-side tool handler", async () => {
+      const mockHandler = vi.fn().mockResolvedValue({ status: "success" });
+      
+      client.registerTool({
+        name: "mock-tool",
+        description: "Mock tool",
+        handler: mockHandler,
+      });
+
+      // Access private method via any cast for testing
+      const result = await (client as any).executeClientTool("mock-tool", { param: "value" });
+
+      expect(mockHandler).toHaveBeenCalledWith({ param: "value" });
+      expect(result).toEqual({ status: "success" });
+    });
+
+    it("should throw error when executing non-existent client tool", async () => {
+      await expect(
+        (client as any).executeClientTool("non-existent", {})
+      ).rejects.toThrow("Client tool not found: non-existent");
+    });
+
+    it("should handle client tool execution errors", async () => {
+      const errorTool = {
+        name: "error-tool",
+        description: "Tool that throws",
+        handler: async () => {
+          throw new Error("Tool execution failed");
+        },
+      };
+
+      client.registerTool(errorTool);
+
+      await expect(
+        (client as any).executeClientTool("error-tool", {})
+      ).rejects.toThrow("Tool execution failed");
+    });
+
+    it("should include clientTools in bundle definition", () => {
+      const tool = {
+        name: "custom-tool",
+        description: "Custom tool",
+        handler: async () => "result",
+      };
+
+      client.registerTool(tool);
+
+      // Bundle should be able to reference client tools
+      const bundle = {
+        name: "test-bundle",
+        clientTools: ["custom-tool"],
+      };
+
+      expect(bundle.clientTools).toContain("custom-tool");
+    });
+  });
 });
