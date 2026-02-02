@@ -1,6 +1,50 @@
 # Amplifier SDK
 
-Multi-language SDKs for [amplifier-app-runtime](https://github.com/manojp99/amplifier-app-runtime).
+Multi-language client libraries for building applications powered by AI agents.
+
+**Build AI-powered apps without managing HTTP requests, SSE streams, or protocol complexity.**
+
+## Features
+
+- ✅ **Type-Safe Client** - Full TypeScript types and Python type hints
+- ✅ **Streaming Responses** - Real-time AI responses via async iterators
+- ✅ **Client-Side Tools** - Define tools that run in your app (zero deployment!)
+- ✅ **Event Handlers** - Subscribe to specific events (tool calls, approvals, thinking)
+- ✅ **Event Correlation** - Match tool calls to results with `toolCallId`
+- ✅ **Session Management** - Create, resume, and manage conversations
+- ✅ **Approval Flow** - Human-in-the-loop for sensitive operations
+- ✅ **Error Handling** - Structured errors with retry detection
+
+## Quick Start
+
+**TypeScript:**
+```typescript
+import { AmplifierClient } from "amplifier-sdk";
+
+const client = new AmplifierClient();
+const session = await client.createSession({
+  bundle: { name: "assistant", instructions: "Be helpful" }
+});
+
+for await (const event of client.prompt(session.id, "Hello!")) {
+  if (event.type === "content.delta") {
+    process.stdout.write(event.data.delta);
+  }
+}
+```
+
+**Python:**
+```python
+from amplifier_sdk import AmplifierClient
+
+async with AmplifierClient() as client:
+    session = await client.create_session(bundle="foundation")
+    async for event in client.prompt(session.id, "Hello!"):
+        if event.type == "content.delta":
+            print(event.data["delta"], end="", flush=True)
+```
+
+**[📖 Full Getting Started Guide →](sdks/GETTING_STARTED.md)**
 
 ## Architecture
 
@@ -134,24 +178,85 @@ curl -X POST "http://localhost:4096/v1/session/$SESSION_ID/prompt/sync" \
 | `agent.completed` | Sub-agent finished |
 | `error` | Error occurred |
 
-## Project Structure
+## Documentation
 
+- **[Getting Started](sdks/GETTING_STARTED.md)** - Installation and first steps
+- **[API Reference](sdks/API_REFERENCE.md)** - Complete API documentation
+- **[Security Guide](sdks/SECURITY.md)** - Security best practices
+- **[Testing](sdks/TESTING.md)** - Test coverage and strategy
+- **[Examples](sdks/EXAMPLES.md)** - Code snippets and patterns
+- **[Roadmap](docs/SDK_ROADMAP.md)** - Feature roadmap
+- **[Sprints](docs/SPRINTS.md)** - Development sprint tracking
+
+## Key Features
+
+### Client-Side Tools
+
+Define tools that run in YOUR app, not on the server:
+
+```typescript
+client.registerTool({
+  name: "get-customer",
+  description: "Query your database",
+  handler: async ({ customerId }) => {
+    return await yourDatabase.customers.findById(customerId);
+  }
+});
+
+// Use in session
+const session = await client.createSession({
+  bundle: {
+    name: "support-agent",
+    clientTools: ["get-customer"]  // Runs locally!
+  }
+});
 ```
-amplifier-sdk/
-├── amplifier-app-runtime/    # Server (git submodule)
-├── sdks/
-│   ├── python/               # Python SDK
-│   │   ├── src/amplifier_sdk/
-│   │   │   ├── client.py     # HTTP client
-│   │   │   └── types.py      # Type definitions
-│   │   └── pyproject.toml
-│   └── typescript/           # TypeScript SDK
-│       ├── src/
-│       │   ├── client.ts     # HTTP client
-│       │   └── types.ts      # Type definitions
-│       └── package.json
-└── README.md
+
+**Benefits:** Zero deployment, instant hot-reload, direct access to your APIs.
+
+### Event Handlers
+
+Subscribe to specific events:
+
+```typescript
+client.on("tool.call", (event) => {
+  console.log(`🔧 ${event.data.tool_name}`);
+});
+
+client.on("content.delta", (event) => {
+  process.stdout.write(event.data.delta);
+});
 ```
+
+### Automatic Approvals
+
+```typescript
+client.onApproval(async (request) => {
+  const userChoice = await showDialog(request.prompt);
+  return userChoice;  // SDK auto-responds
+});
+```
+
+### Event Correlation
+
+Match tool calls to their results:
+
+```typescript
+if (event.type === "tool.call") {
+  const callId = event.toolCallId;  // Use this to match
+}
+
+if (event.type === "tool.result") {
+  const callId = event.toolCallId;  // Matches the call!
+}
+```
+
+## Examples
+
+See the `examples/` directory for working applications:
+
+- **[Agent Playground](examples/agent-playground/)** - Interactive agent builder with all SDK features
+- **[Chat App](examples/chat-app/)** - Simple chat interface
 
 ## Development
 
@@ -159,9 +264,9 @@ amplifier-sdk/
 
 ```bash
 cd sdks/python
-uv venv && source .venv/bin/activate
-uv pip install -e ".[dev]"
-pytest
+uv sync
+uv run pytest                 # Run tests (21 tests)
+uv run ruff format src/       # Format code
 ```
 
 ### TypeScript SDK
@@ -169,9 +274,30 @@ pytest
 ```bash
 cd sdks/typescript
 npm install
-npm run build
-npm test
+npm run build                 # Build SDK
+npm test                      # Run tests (71 tests)
+npm run typecheck             # Type checking
 ```
+
+## Project Status
+
+**Current Version:** 0.1.0 (pre-release)  
+**Test Coverage:** 92 tests (100% pass rate)  
+**Phase 1:** ✅ Complete  
+**Phase 2:** ✅ Complete  
+**Sprint 3:** 📍 Documentation (in progress)
+
+See [SPRINTS.md](docs/SPRINTS.md) for development tracking.
+
+## Contributing
+
+Contributions welcome! Please:
+
+1. Read the [Getting Started](sdks/GETTING_STARTED.md) guide
+2. Check [open issues](https://github.com/manojp99/amplifier-sdk/issues)
+3. Follow the existing code style
+4. Add tests for new features
+5. Update documentation
 
 ## License
 
