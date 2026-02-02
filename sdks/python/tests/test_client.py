@@ -126,6 +126,65 @@ class TestTypes:
         assert error_event.is_error() is True
         assert content_event.is_error() is False
 
+    def test_event_extracts_tool_call_id(self) -> None:
+        """Test Event extracts tool_call_id from data."""
+        data = {
+            "type": "tool.call",
+            "data": {
+                "tool_name": "bash",
+                "tool_call_id": "tc_abc123",
+                "arguments": {"command": "ls"},
+            },
+        }
+
+        event = Event.from_dict(data)
+
+        assert event.type == "tool.call"
+        assert event.tool_call_id == "tc_abc123"
+        assert event.data["tool_name"] == "bash"
+
+    def test_event_extracts_agent_id(self) -> None:
+        """Test Event extracts agent_id from data."""
+        data = {
+            "type": "content.delta",
+            "data": {
+                "delta": "Hello from child",
+                "agent_id": "agent_child_1",
+            },
+        }
+
+        event = Event.from_dict(data)
+
+        assert event.type == "content.delta"
+        assert event.agent_id == "agent_child_1"
+        assert event.data["delta"] == "Hello from child"
+
+    def test_event_correlation_tool_call_to_result(self) -> None:
+        """Test tool call and result correlation using tool_call_id."""
+        call_data = {
+            "type": "tool.call",
+            "data": {
+                "tool_name": "bash",
+                "tool_call_id": "tc_123",
+                "arguments": {"command": "pwd"},
+            },
+        }
+
+        result_data = {
+            "type": "tool.result",
+            "data": {
+                "tool_call_id": "tc_123",
+                "result": "/workspace",
+            },
+        }
+
+        call_event = Event.from_dict(call_data)
+        result_event = Event.from_dict(result_data)
+
+        # Should be able to correlate using tool_call_id
+        assert call_event.tool_call_id == result_event.tool_call_id
+        assert call_event.tool_call_id == "tc_123"
+
     def test_session_info_from_dict(self) -> None:
         """Test SessionInfo.from_dict."""
         data = {
