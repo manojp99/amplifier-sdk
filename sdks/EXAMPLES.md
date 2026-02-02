@@ -2,6 +2,8 @@
 
 Common patterns and use cases for the Amplifier SDK.
 
+**Note:** These examples assume you have the amplifier-app-runtime server running at `http://localhost:4096`. See [GETTING_STARTED.md](GETTING_STARTED.md) for setup instructions.
+
 ---
 
 ## Basic Usage

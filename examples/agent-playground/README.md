@@ -31,14 +31,39 @@ Interactive playground for building and testing Amplifier agents with the SDK.
 - **Export Chat**: Download conversation history as JSON
 - **Visual Toggles**: Control what information is displayed
 
+## Prerequisites
+
+The playground requires the **amplifier-app-runtime server** running separately.
+
+**Note:** The runtime is a separate Python application, not part of this package.
+
 ## Quick Start
 
-### 1. Start the Runtime
+### 1. Install and Start the Runtime (Separate Repository)
 
 ```bash
+# Clone runtime repository (private - requires access)
+git clone git@github.com:manojp99/amplifier-app-runtime.git
 cd amplifier-app-runtime
+
+# Install and configure
+uv sync
+mkdir -p .amplifier
+cat > .amplifier/settings.yaml << EOF
+providers:
+  - module: provider-anthropic
+    config:
+      priority: 1
+EOF
+
+# Set API key
+export ANTHROPIC_API_KEY=your_key_here
+
+# Start server
 uv run python -m amplifier_app_runtime.cli --http --port 4096
 ```
+
+Keep this server running (localhost:4096).
 
 ### 2. Start the Playground
 

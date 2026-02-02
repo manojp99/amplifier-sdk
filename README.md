@@ -15,13 +15,45 @@ Multi-language client libraries for building applications powered by AI agents.
 - ✅ **Approval Flow** - Human-in-the-loop for sensitive operations
 - ✅ **Error Handling** - Structured errors with retry detection
 
+## Installation
+
+**Note:** This repository is currently **private**. The SDK and runtime are distributed separately via GitHub.
+
+### 1. Install the Runtime (Server)
+
+The runtime is a **separate Python application** that must be running:
+
+```bash
+git clone git@github.com:manojp99/amplifier-app-runtime.git
+cd amplifier-app-runtime
+uv sync
+# Configure provider and start server
+uv run python -m amplifier_app_runtime.cli --http --port 4096
+```
+
+### 2. Install the SDK (Client)
+
+**TypeScript:**
+```bash
+npm install git+ssh://git@github.com/manojp99/amplifier-sdk.git#subdirectory=sdks/typescript
+```
+
+**Python:**
+```bash
+pip install git+ssh://git@github.com/manojp99/amplifier-sdk.git#subdirectory=sdks/python
+```
+
+**[📖 Full Installation Guide →](sdks/GETTING_STARTED.md)**
+
 ## Quick Start
 
 **TypeScript:**
 ```typescript
 import { AmplifierClient } from "amplifier-sdk";
 
-const client = new AmplifierClient();
+// Connect to runtime server
+const client = new AmplifierClient({ baseUrl: "http://localhost:4096" });
+
 const session = await client.createSession({
   bundle: { name: "assistant", instructions: "Be helpful" }
 });
@@ -37,28 +69,37 @@ for await (const event of client.prompt(session.id, "Hello!")) {
 ```python
 from amplifier_sdk import AmplifierClient
 
-async with AmplifierClient() as client:
+async with AmplifierClient(base_url="http://localhost:4096") as client:
     session = await client.create_session(bundle="foundation")
     async for event in client.prompt(session.id, "Hello!"):
         if event.type == "content.delta":
             print(event.data["delta"], end="", flush=True)
 ```
 
-**[📖 Full Getting Started Guide →](sdks/GETTING_STARTED.md)**
-
 ## Architecture
+
+The SDK is a **client library** that communicates with a **separate server** (amplifier-app-runtime):
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│  Your App (Python, TypeScript, Go, ...)                             │
+│  Your App (uses SDK)                                                │
+│      │                                                              │
+│      │ Uses: import { AmplifierClient } from "amplifier-sdk"       │
+│      ▼                                                              │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │       Amplifier SDK (THIS PACKAGE)                          │   │
+│  │         • TypeScript or Python client library               │   │
+│  │         • HTTP client + SSE streaming                       │   │
+│  │         • Type-safe API wrappers                            │   │
+│  └─────────────────────────────────────────────────────────────┘   │
 │      │                                                              │
 │      │ HTTP + SSE (streaming)                                       │
 │      ▼                                                              │
 │  ┌─────────────────────────────────────────────────────────────┐   │
-│  │       amplifier-app-runtime (localhost:4096)                │   │
+│  │       amplifier-app-runtime (SEPARATE SERVER)               │   │
+│  │         • localhost:4096                                    │   │
 │  │         • REST API + SSE streaming                          │   │
 │  │         • Session management                                │   │
-│  │         • ACP protocol support                              │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 │      │                                                              │
 │      ▼                                                              │
@@ -68,6 +109,8 @@ async with AmplifierClient() as client:
 │  └─────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────┘
 ```
+
+**Think of it like:** AWS SDK (this) + AWS Services (runtime)
 
 ## SDKs
 

@@ -18,63 +18,74 @@ Amplifier SDK provides client libraries (TypeScript and Python) for building app
 
 ## Prerequisites
 
-### Runtime Server
+The Amplifier SDK is a **client library** that communicates with a **separate server component** (amplifier-app-runtime). You need both:
 
-The SDK communicates with `amplifier-app-runtime` over HTTP. You need the runtime server running:
+1. **Amplifier Runtime (Server)** - The AI agent execution engine
+2. **Amplifier SDK (Client)** - This package (TypeScript or Python)
+
+**Architecture:**
+```
+Your App → SDK (HTTP client) → Runtime Server → Amplifier Core
+```
+
+### 1. Install and Run the Runtime Server
+
+The runtime is a **separate Python application** that must be running before you can use the SDK.
+
+**Note:** The runtime repository is currently private. You need access to the repository.
 
 ```bash
-# Clone the runtime (if you don't have it)
-git clone https://github.com/manojp99/amplifier-app-runtime
+# Clone the runtime repository
+git clone git@github.com:manojp99/amplifier-app-runtime.git
 cd amplifier-app-runtime
 
-# Install and start
+# Install dependencies
 uv sync
+
+# Configure a provider (required)
+mkdir -p .amplifier
+cat > .amplifier/settings.yaml << EOF
+providers:
+  - module: provider-anthropic
+    config:
+      priority: 1
+EOF
+
+# Set API key
+export ANTHROPIC_API_KEY=your_key_here
+
+# Start the server
 uv run python -m amplifier_app_runtime.cli --http --port 4096
 ```
 
 The runtime will be available at `http://localhost:4096`.
 
-### Provider Configuration
-
-The runtime needs at least one AI provider configured. Create `.amplifier/settings.yaml`:
-
-```yaml
-providers:
-  - module: provider-anthropic
-    config:
-      priority: 1
-```
-
-Set your API key:
-```bash
-export ANTHROPIC_API_KEY=your_key_here
-```
+**Keep this server running** while using the SDK.
 
 ---
 
 ## Installation
 
+**Note:** The SDK repository is currently private. You need GitHub access.
+
 ### TypeScript / JavaScript
 
 ```bash
-npm install amplifier-sdk
-```
-
-Or with yarn:
-```bash
-yarn add amplifier-sdk
+# Install from private GitHub repo
+npm install git+ssh://git@github.com/manojp99/amplifier-sdk.git#subdirectory=sdks/typescript
 ```
 
 ### Python
 
 ```bash
-pip install amplifier-sdk
+# Install from private GitHub repo
+pip install git+ssh://git@github.com/manojp99/amplifier-sdk.git#subdirectory=sdks/python
+
+# Or with uv
+uv add git+ssh://git@github.com/manojp99/amplifier-sdk.git#subdirectory=sdks/python
 ```
 
-Or with uv:
-```bash
-uv add amplifier-sdk
-```
+**Authentication:** Ensure your SSH keys are configured with GitHub (`ssh -T git@github.com`)
 
 ---
 
