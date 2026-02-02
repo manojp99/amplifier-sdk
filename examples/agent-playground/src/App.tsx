@@ -3,7 +3,6 @@ import {
   AmplifierClient,
   type Event,
   type BundleDefinition,
-  ConnectionState,
 } from "amplifier-sdk";
 
 // Available tools that can be selected
@@ -12,6 +11,12 @@ const AVAILABLE_TOOLS = [
   { id: "tool-bash", name: "Bash", icon: "💻" },
   { id: "tool-web", name: "Web Search", icon: "🔍" },
   { id: "tool-web-fetch", name: "Web Fetch", icon: "🌐" },
+];
+
+// Available providers
+const AVAILABLE_PROVIDERS = [
+  { id: "anthropic", name: "Anthropic", models: ["claude-sonnet-4-5-20250514", "claude-opus-4-20250514", "claude-haiku-3-5-20250307"] },
+  { id: "openai", name: "OpenAI", models: ["gpt-4o", "gpt-4o-mini", "o1", "o1-mini"] },
 ];
 
 // Preset agent configurations
@@ -60,14 +65,39 @@ interface AgentConfig {
   name: string;
   instructions: string;
   tools: string[];
+  provider?: string;
+  model?: string;
 }
 
 interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
-  toolCalls?: { name: string; args: string }[];
+  toolCalls?: ToolCallInfo[];
+  thinking?: string;
+  subAgents?: SubAgentInfo[];
   isStreaming?: boolean;
+}
+
+interface ToolCallInfo {
+  id?: string;  // toolCallId for correlation
+  name: string;
+  args: string;
+  result?: string;
+}
+
+interface SubAgentInfo {
+  id: string;
+  name: string;
+  status: "running" | "completed";
+  result?: string;
+}
+
+interface PendingApproval {
+  requestId: string;
+  prompt: string;
+  toolName?: string;
+  args?: Record<string, unknown>;
 }
 
 // Initialize client with observability
@@ -86,6 +116,7 @@ function App() {
   // Config state
   const [config, setConfig] = useState<AgentConfig>(PRESETS.assistant);
   const [appliedConfig, setAppliedConfig] = useState<AgentConfig | null>(null);
+  const [customTools, setCustomTools] = useState<string[]>([]);
 
   // Session state
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -96,6 +127,12 @@ function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
+
+  // UI state
+  const [showThinking, setShowThinking] = useState(true);
+  const [showSubAgents, setShowSubAgents] = useState(true);
+  const [showToolResults, setShowToolResults] = useState(true);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -103,6 +140,8 @@ function App() {
   const configChanged = appliedConfig && (
     config.name !== appliedConfig.name ||
     config.instructions !== appliedConfig.instructions ||
+    config.provider !== appliedConfig.provider ||
+    config.model !== appliedConfig.model ||
     JSON.stringify(config.tools) !== JSON.stringify(appliedConfig.tools)
   );
 
@@ -120,6 +159,19 @@ function App() {
     client.ping().then(setIsConnected);
   }, []);
 
+  // Load saved configs from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem("agent-playground-configs");
+    if (saved) {
+      try {
+        JSON.parse(saved);
+        // Could restore last used config here
+      } catch (err) {
+        console.error("Failed to load saved configs:", err);
+      }
+    }
+  }, []);
+
   // Create/recreate session with current config
   const applyConfig = async () => {
     setIsCreatingSession(true);
@@ -134,8 +186,16 @@ function App() {
       const bundle: BundleDefinition = {
         name: config.name,
         instructions: config.instructions,
-        tools: config.tools.map((t) => ({ module: t })),
+        tools: [...config.tools, ...customTools].map((t) => ({ module: t })),
       };
+
+      // Add provider config if specified
+      if (config.provider) {
+        bundle.providers = [{ 
+          module: `provider-${config.provider}`,
+          config: config.model ? { model: config.model } : undefined
+        }];
+      }
 
       // Create new session with runtime bundle
       const session = await client.createSession({ bundle });
@@ -146,12 +206,51 @@ function App() {
       setIsConnected(true);
 
       console.log(`[Session] Created ${session.id} with bundle:`, bundle);
+      
+      // Save config to localStorage
+      saveConfig(config);
     } catch (err) {
       console.error("Failed to create session:", err);
       setIsConnected(false);
     } finally {
       setIsCreatingSession(false);
     }
+  };
+
+  // Save configuration
+  const saveConfig = (cfg: AgentConfig) => {
+    const saved = JSON.parse(localStorage.getItem("agent-playground-configs") || "[]");
+    const existing = saved.find((c: AgentConfig) => c.name === cfg.name);
+    
+    if (!existing) {
+      saved.push(cfg);
+      localStorage.setItem("agent-playground-configs", JSON.stringify(saved));
+    }
+  };
+
+  // Export chat
+  const exportChat = () => {
+    const timestamp = new Date().toISOString();
+    const data = {
+      sessionId,
+      config: appliedConfig,
+      messages: messages.map(m => ({
+        role: m.role,
+        content: m.content,
+        toolCalls: m.toolCalls,
+        thinking: m.thinking,
+        subAgents: m.subAgents,
+      })),
+      exportedAt: timestamp,
+    };
+
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `chat-${sessionId?.slice(0, 8)}-${timestamp}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   // Send message
@@ -175,6 +274,7 @@ function App() {
       role: "assistant",
       content: "",
       toolCalls: [],
+      subAgents: [],
       isStreaming: true,
     };
     setMessages((prev) => [...prev, assistantMessage]);
@@ -215,6 +315,18 @@ function App() {
         );
         break;
 
+      case "thinking.delta":
+        if (showThinking) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === messageId
+                ? { ...m, thinking: (m.thinking || "") + ((event.data.delta as string) || "") }
+                : m
+            )
+          );
+        }
+        break;
+
       case "tool.call":
         setMessages((prev) =>
           prev.map((m) =>
@@ -234,10 +346,91 @@ function App() {
         );
         break;
 
+      case "tool.result":
+        if (showToolResults) {
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== messageId) return m;
+              const toolCalls = [...(m.toolCalls || [])];
+              const lastTool = toolCalls[toolCalls.length - 1];
+              if (lastTool) {
+                lastTool.result = typeof event.data.result === "string" 
+                  ? event.data.result 
+                  : JSON.stringify(event.data.result, null, 2);
+              }
+              return { ...m, toolCalls };
+            })
+          );
+        }
+        break;
+
+      case "approval.required":
+        setPendingApproval({
+          requestId: event.data.request_id as string,
+          prompt: event.data.prompt as string,
+          toolName: event.data.tool_name as string | undefined,
+          args: event.data.arguments as Record<string, unknown> | undefined,
+        });
+        break;
+
+      case "agent.spawned":
+        if (showSubAgents) {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === messageId
+                ? {
+                    ...m,
+                    subAgents: [
+                      ...(m.subAgents || []),
+                      {
+                        id: event.data.agent_id as string,
+                        name: event.data.agent_name as string,
+                        status: "running",
+                      },
+                    ],
+                  }
+                : m
+            )
+          );
+        }
+        break;
+
+      case "agent.completed":
+        if (showSubAgents) {
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== messageId) return m;
+              const subAgents = (m.subAgents || []).map((agent) =>
+                agent.id === event.data.agent_id
+                  ? { 
+                      ...agent, 
+                      status: "completed" as const,
+                      result: event.data.result as string | undefined,
+                    }
+                  : agent
+              );
+              return { ...m, subAgents };
+            })
+          );
+        }
+        break;
+
       default:
         if (!["content.end", "content.start", "ack", "result"].includes(event.type)) {
           console.log("Event:", event.type, event.data);
         }
+    }
+  };
+
+  const handleApproval = async (approve: boolean) => {
+    if (!pendingApproval || !sessionId) return;
+
+    try {
+      // SDK expects string choice, convert boolean to string
+      await client.respondApproval(sessionId, pendingApproval.requestId, approve.toString());
+      setPendingApproval(null);
+    } catch (err) {
+      console.error("Failed to respond to approval:", err);
     }
   };
 
@@ -257,14 +450,47 @@ function App() {
     }));
   };
 
+  const addCustomTool = () => {
+    const toolName = prompt("Enter custom tool module name (e.g., 'tool-custom'):");
+    if (toolName && toolName.trim()) {
+      setCustomTools((prev) => [...prev, toolName.trim()]);
+    }
+  };
+
   return (
     <div className="app">
       {/* Header */}
       <header className="header">
         <h1>Agent Playground</h1>
-        <div className={`connection-status ${isConnected ? "connected" : "disconnected"}`}>
-          <span className="status-dot" />
-          {isConnected ? "Connected" : "Disconnected"}
+        <div className="header-controls">
+          <label className="toggle-label">
+            <input
+              type="checkbox"
+              checked={showThinking}
+              onChange={(e) => setShowThinking(e.target.checked)}
+            />
+            Show Thinking
+          </label>
+          <label className="toggle-label">
+            <input
+              type="checkbox"
+              checked={showSubAgents}
+              onChange={(e) => setShowSubAgents(e.target.checked)}
+            />
+            Show Sub-agents
+          </label>
+          <label className="toggle-label">
+            <input
+              type="checkbox"
+              checked={showToolResults}
+              onChange={(e) => setShowToolResults(e.target.checked)}
+            />
+            Show Tool Results
+          </label>
+          <div className={`connection-status ${isConnected ? "connected" : "disconnected"}`}>
+            <span className="status-dot" />
+            {isConnected ? "Connected" : "Disconnected"}
+          </div>
         </div>
       </header>
 
@@ -297,6 +523,32 @@ function App() {
         </div>
 
         <div className="config-section">
+          <h3>Provider & Model</h3>
+          <select
+            className="config-input"
+            value={config.provider || ""}
+            onChange={(e) => setConfig((prev) => ({ ...prev, provider: e.target.value || undefined, model: undefined }))}
+          >
+            <option value="">Default</option>
+            {AVAILABLE_PROVIDERS.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+          {config.provider && (
+            <select
+              className="config-input"
+              value={config.model || ""}
+              onChange={(e) => setConfig((prev) => ({ ...prev, model: e.target.value || undefined }))}
+            >
+              <option value="">Default</option>
+              {AVAILABLE_PROVIDERS.find(p => p.id === config.provider)?.models.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        <div className="config-section">
           <h3>Instructions</h3>
           <textarea
             className="config-input config-textarea"
@@ -324,6 +576,19 @@ function App() {
               </label>
             ))}
           </div>
+          {customTools.length > 0 && (
+            <div className="custom-tools">
+              {customTools.map((tool, i) => (
+                <div key={i} className="custom-tool-item">
+                  🔧 {tool}
+                  <button onClick={() => setCustomTools(prev => prev.filter((_, idx) => idx !== i))}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
+          <button className="btn-secondary" onClick={addCustomTool} style={{ marginTop: "8px", width: "100%" }}>
+            + Add Custom Tool
+          </button>
         </div>
 
         {configChanged && (
@@ -345,14 +610,20 @@ function App() {
               : "Create Agent"}
           </button>
           {sessionId && (
-            <button
-              className="btn btn-secondary"
-              onClick={() => {
-                setMessages([]);
-              }}
-            >
-              Clear Chat
-            </button>
+            <>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setMessages([])}
+              >
+                Clear Chat
+              </button>
+              <button
+                className="btn btn-secondary"
+                onClick={exportChat}
+              >
+                Export
+              </button>
+            </>
           )}
         </div>
       </aside>
@@ -367,12 +638,38 @@ function App() {
                 <div>
                   <div className="agent-name">{appliedConfig?.name || config.name}</div>
                   <div className="agent-status">
-                    {appliedConfig?.tools.length || 0} tools enabled
+                    {appliedConfig?.tools.length || 0} tools • {appliedConfig?.provider || "default provider"}
                   </div>
                 </div>
               </div>
               <div className="session-badge">{sessionId.slice(0, 12)}...</div>
             </div>
+
+            {/* Approval Modal */}
+            {pendingApproval && (
+              <div className="approval-overlay">
+                <div className="approval-modal">
+                  <h3>🔐 Approval Required</h3>
+                  <p>{pendingApproval.prompt}</p>
+                  {pendingApproval.toolName && (
+                    <div className="approval-details">
+                      <strong>Tool:</strong> {pendingApproval.toolName}
+                      {pendingApproval.args && (
+                        <pre>{JSON.stringify(pendingApproval.args, null, 2)}</pre>
+                      )}
+                    </div>
+                  )}
+                  <div className="approval-actions">
+                    <button className="btn btn-primary" onClick={() => handleApproval(true)}>
+                      ✓ Approve
+                    </button>
+                    <button className="btn btn-secondary" onClick={() => handleApproval(false)}>
+                      ✗ Deny
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="messages">
               {messages.length === 0 ? (
@@ -387,13 +684,35 @@ function App() {
                     <div className="message-avatar">
                       {message.role === "user" ? "👤" : "🤖"}
                     </div>
-                    <div>
+                    <div className="message-body">
+                      {message.thinking && showThinking && (
+                        <div className="thinking-block">
+                          <div className="thinking-header">💭 Thinking</div>
+                          <div className="thinking-content">{message.thinking}</div>
+                        </div>
+                      )}
                       <div className="message-content">
                         {message.content || (message.isStreaming && <LoadingDots />)}
                       </div>
                       {message.toolCalls?.map((tool, i) => (
                         <div key={i} className="tool-call">
                           <div className="tool-call-header">🔧 {tool.name}</div>
+                          {showToolResults && tool.result && (
+                            <div className="tool-result">
+                              <strong>Result:</strong>
+                              <pre>{tool.result}</pre>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {message.subAgents?.map((agent, i) => (
+                        <div key={i} className="sub-agent">
+                          <div className="sub-agent-header">
+                            {agent.status === "running" ? "⏳" : "✓"} Sub-agent: {agent.name}
+                          </div>
+                          {agent.result && (
+                            <div className="sub-agent-result">{agent.result}</div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -411,12 +730,12 @@ function App() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   placeholder="Type a message..."
-                  disabled={isLoading}
+                  disabled={isLoading || !!pendingApproval}
                 />
                 <button
                   type="submit"
                   className="send-btn"
-                  disabled={isLoading || !input.trim()}
+                  disabled={isLoading || !input.trim() || !!pendingApproval}
                 >
                   {isLoading ? "..." : "Send"}
                 </button>
