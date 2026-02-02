@@ -124,13 +124,17 @@ steps:
       1. Did all tests pass?
       2. Are there any test failures or errors?
       3. What specific issues need to be fixed?
-      4. Set tests_passed to "true" if all tests passed, "false" otherwise
       
-      Provide a structured analysis with:
-      - tests_passed: true/false
-      - issues: list of specific issues found
-      - recommended_fixes: what needs to be corrected
+      Return your analysis as a JSON object with this exact structure:
+      {
+        "tests_passed": true or false,
+        "issues": ["list of specific issues found"],
+        "recommended_fixes": ["what needs to be corrected"]
+      }
+      
+      IMPORTANT: Return ONLY the JSON object, no additional text or markdown formatting.
     output: "test_analysis"
+    parse_json: true
     timeout: 300
 
   - id: "fix-sdk-issues"
