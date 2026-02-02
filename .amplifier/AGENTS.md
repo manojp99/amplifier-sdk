@@ -126,5 +126,8 @@ fetch('/v1/session', { method: 'POST', ... });
 ## Current Phase
 
 See `docs/SDK_ROADMAP.md` for the phased development plan.
+See `docs/SPRINTS.md` for sprint-based development tracking.
 
-**Phase 1 (Current):** Foundation - session management, streaming, runtime bundles
+**Phase 1:** ✅ Complete - session management, streaming, runtime bundles
+**Phase 2:** ✅ Complete - client-side tools, approvals, session resume, event handlers
+**Current Sprint:** Sprint 3 - Documentation (preparing for v0.1.0 release)
