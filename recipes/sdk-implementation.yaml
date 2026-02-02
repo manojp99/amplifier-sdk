@@ -1,0 +1,182 @@
+name: "sdk-implementation"
+description: "Implements SDK feature in TypeScript and Python with unit tests"
+version: "1.0.0"
+tags: ["sdk", "implementation", "testing", "typescript", "python"]
+
+# This sub-recipe implements a feature in both SDKs and creates/runs unit tests
+# Can be run independently for SDK-only changes
+
+context:
+  feature_name: ""          # Required: Name of the feature (e.g., "retry-with-backoff")
+  feature_spec: ""          # Required: Detailed feature specification
+  workspace_dir: "/Users/mpaidiparthy/repos/amplifier-sdk/amplifier-sdk"
+
+steps:
+  - id: "implement-typescript"
+    agent: "foundation:zen-architect"
+    mode: "ARCHITECT"
+    prompt: |
+      Implement the following feature in the TypeScript SDK:
+      
+      Feature: {{feature_name}}
+      Specification: {{feature_spec}}
+      
+      Working directory: {{workspace_dir}}
+      
+      Requirements:
+      - Follow TypeScript best practices and existing SDK patterns
+      - Maintain consistency with existing code style
+      - Add proper type definitions
+      - Include JSDoc comments for public APIs
+      - Handle edge cases and errors appropriately
+      
+      Implementation should be production-ready and follow the SDK's architectural patterns.
+    output: "typescript_implementation"
+    timeout: 900
+
+  - id: "implement-python"
+    agent: "foundation:zen-architect"
+    mode: "ARCHITECT"
+    prompt: |
+      Implement the following feature in the Python SDK for parity with TypeScript:
+      
+      Feature: {{feature_name}}
+      Specification: {{feature_spec}}
+      
+      TypeScript implementation (for reference): {{typescript_implementation}}
+      
+      Working directory: {{workspace_dir}}
+      
+      Requirements:
+      - Follow Python best practices and PEP 8
+      - Maintain consistency with existing SDK patterns
+      - Add proper type hints (Python 3.8+)
+      - Include docstrings for public APIs
+      - Handle edge cases and errors appropriately
+      - Ensure feature parity with TypeScript implementation
+      
+      Implementation should be production-ready and follow the SDK's architectural patterns.
+    output: "python_implementation"
+    timeout: 900
+
+  - id: "create-unit-tests"
+    agent: "foundation:test-coverage"
+    prompt: |
+      Create comprehensive unit tests for the {{feature_name}} feature in both SDKs.
+      
+      Feature specification: {{feature_spec}}
+      
+      TypeScript implementation: {{typescript_implementation}}
+      Python implementation: {{python_implementation}}
+      
+      Working directory: {{workspace_dir}}
+      
+      Requirements:
+      - Create unit tests for TypeScript SDK (Jest framework)
+      - Create unit tests for Python SDK (pytest framework)
+      - Cover success cases, edge cases, and error conditions
+      - Ensure tests follow existing test patterns in the codebase
+      - Aim for high code coverage (>90%)
+      - Tests should be independent and idempotent
+      
+      Generate complete, runnable test files.
+    output: "unit_tests"
+    timeout: 600
+
+  - id: "run-typescript-tests"
+    agent: "bash"
+    prompt: |
+      Run the TypeScript SDK tests for the new feature.
+      
+      Commands to execute:
+      1. cd {{workspace_dir}}/typescript
+      2. npm test -- --testPathPattern={{feature_name}}
+      
+      Return the test results.
+    output: "typescript_test_results"
+    timeout: 300
+    on_error: "continue"  # Continue even if tests fail - we'll handle with bug-hunter
+
+  - id: "run-python-tests"
+    agent: "bash"
+    prompt: |
+      Run the Python SDK tests for the new feature.
+      
+      Commands to execute:
+      1. cd {{workspace_dir}}/python
+      2. pytest -v tests/test_{{feature_name}}.py
+      
+      Return the test results.
+    output: "python_test_results"
+    timeout: 300
+    on_error: "continue"  # Continue even if tests fail - we'll handle with bug-hunter
+
+  - id: "analyze-test-results"
+    agent: "foundation:zen-architect"
+    mode: "ANALYZE"
+    prompt: |
+      Analyze the test results from both SDKs:
+      
+      TypeScript test results: {{typescript_test_results}}
+      Python test results: {{python_test_results}}
+      
+      Determine:
+      1. Did all tests pass?
+      2. Are there any test failures or errors?
+      3. What specific issues need to be fixed?
+      4. Set tests_passed to "true" if all tests passed, "false" otherwise
+      
+      Provide a structured analysis with:
+      - tests_passed: true/false
+      - issues: list of specific issues found
+      - recommended_fixes: what needs to be corrected
+    output: "test_analysis"
+    timeout: 300
+
+  - id: "fix-sdk-issues"
+    agent: "foundation:bug-hunter"
+    condition: "{{test_analysis.tests_passed}} == 'false'"
+    prompt: |
+      Fix the issues found in the SDK implementation based on test failures:
+      
+      Test analysis: {{test_analysis}}
+      
+      TypeScript implementation: {{typescript_implementation}}
+      Python implementation: {{python_implementation}}
+      
+      Test results:
+      - TypeScript: {{typescript_test_results}}
+      - Python: {{python_test_results}}
+      
+      Working directory: {{workspace_dir}}
+      
+      Debug and fix the issues to make all tests pass.
+    output: "bug_fixes"
+    timeout: 600
+    retry:
+      max_attempts: 2
+      backoff: "exponential"
+
+  - id: "rerun-tests-after-fix"
+    agent: "bash"
+    condition: "{{test_analysis.tests_passed}} == 'false'"
+    prompt: |
+      Re-run tests after applying fixes.
+      
+      Commands:
+      1. cd {{workspace_dir}}/typescript && npm test -- --testPathPattern={{feature_name}}
+      2. cd {{workspace_dir}}/python && pytest -v tests/test_{{feature_name}}.py
+      
+      Return combined test results.
+    output: "final_test_results"
+    timeout: 300
+    on_error: "fail"  # Fail if tests still don't pass after fixes
+
+# Usage:
+#   amplifier run "execute sdk-implementation.yaml with feature_name='retry' feature_spec='...' workspace_dir='/path/to/sdk'"
+#
+# This sub-recipe:
+# - Implements feature in both TypeScript and Python SDKs
+# - Creates comprehensive unit tests
+# - Runs tests and fixes issues if found (up to 2 retry attempts)
+# - Ensures feature parity between SDKs

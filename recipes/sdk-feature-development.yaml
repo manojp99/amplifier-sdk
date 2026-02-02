@@ -1,0 +1,212 @@
+name: "sdk-feature-development"
+description: "Complete SDK feature development workflow with staged approvals"
+version: "1.0.0"
+tags: ["sdk", "feature", "development", "workflow", "staged"]
+
+# Complete workflow for developing SDK features from specification to commit
+# Includes approval gates at key decision points for human review
+
+context:
+  feature_name: ""              # Required: Feature name (e.g., "retry-with-backoff")
+  feature_description: ""       # Required: Brief description of the feature
+  needs_playground: true        # Optional: Integrate in playground? (default: true)
+  needs_docs: true              # Optional: Update documentation? (default: true)
+  workspace_dir: "/Users/mpaidiparthy/repos/amplifier-sdk/amplifier-sdk"
+
+# Recursion protection for recipe composition
+recursion:
+  max_depth: 2
+  max_total_steps: 100
+
+stages:
+  # Stage 1: Feature Specification
+  # Generate detailed spec from brief description, user approves before implementation
+  - name: "specification"
+    requires_approval: true
+    description: "Generate and approve feature specification"
+    steps:
+      - id: "generate-feature-spec"
+        agent: "foundation:zen-architect"
+        mode: "ARCHITECT"
+        prompt: |
+          Generate a detailed feature specification for the following SDK feature:
+          
+          Feature name: {{feature_name}}
+          Brief description: {{feature_description}}
+          
+          Create a comprehensive specification including:
+          1. **Feature Overview**: Clear description of the feature and its purpose
+          2. **API Design**: Proposed TypeScript and Python API signatures
+          3. **Behavior Specification**: Detailed behavior, including edge cases
+          4. **Error Handling**: How errors should be handled and reported
+          5. **Dependencies**: Any new dependencies or SDK changes needed
+          6. **Breaking Changes**: Whether this introduces breaking changes
+          7. **Testing Strategy**: What needs to be tested (unit, integration)
+          8. **Documentation Needs**: What documentation should be created/updated
+          
+          The specification should be detailed enough for implementation without ambiguity.
+          Consider both TypeScript and Python SDK requirements for parity.
+        output: "feature_spec"
+        timeout: 900
+
+  # Stage 2: SDK Implementation
+  # Implement in both SDKs, create tests, run tests, fix issues
+  - name: "implementation"
+    requires_approval: true
+    description: "Implement feature in TypeScript and Python SDKs with tests"
+    steps:
+      - id: "implement-sdk"
+        type: "recipe"
+        recipe: "sdk-implementation.yaml"
+        context:
+          feature_name: "{{feature_name}}"
+          feature_spec: "{{feature_spec}}"
+          workspace_dir: "{{workspace_dir}}"
+        output: "sdk_implementation_results"
+        timeout: 3600
+
+  # Stage 3: Playground Integration (conditional)
+  # Integrate feature in playground and run integration tests
+  - name: "playground"
+    requires_approval: true
+    description: "Integrate feature in playground and run integration tests"
+    condition: "{{needs_playground}} == true"
+    steps:
+      - id: "integrate-playground"
+        type: "recipe"
+        recipe: "playground-integration.yaml"
+        context:
+          feature_name: "{{feature_name}}"
+          feature_spec: "{{feature_spec}}"
+          typescript_implementation: "{{sdk_implementation_results.typescript_implementation}}"
+          python_implementation: "{{sdk_implementation_results.python_implementation}}"
+          workspace_dir: "{{workspace_dir}}"
+        output: "playground_results"
+        timeout: 3600
+
+  # Stage 4: Documentation (conditional)
+  # Update SDK documentation for the new feature
+  - name: "documentation"
+    requires_approval: true
+    description: "Update SDK documentation"
+    condition: "{{needs_docs}} == true"
+    steps:
+      - id: "update-documentation"
+        type: "recipe"
+        recipe: "sdk-documentation.yaml"
+        context:
+          feature_name: "{{feature_name}}"
+          feature_spec: "{{feature_spec}}"
+          typescript_implementation: "{{sdk_implementation_results.typescript_implementation}}"
+          python_implementation: "{{sdk_implementation_results.python_implementation}}"
+          workspace_dir: "{{workspace_dir}}"
+        output: "documentation_results"
+        timeout: 3600
+
+  # Stage 5: Final Review and Commit
+  # User reviews all changes, then create quality commits
+  - name: "finalization"
+    description: "Review all changes and create commits"
+    steps:
+      - id: "summarize-changes"
+        agent: "foundation:zen-architect"
+        mode: "ANALYZE"
+        prompt: |
+          Summarize all changes made during this feature development:
+          
+          Feature: {{feature_name}}
+          Specification: {{feature_spec}}
+          
+          SDK Implementation: {{sdk_implementation_results}}
+          {{#if needs_playground}}
+          Playground Integration: {{playground_results}}
+          {{/if}}
+          {{#if needs_docs}}
+          Documentation: {{documentation_results}}
+          {{/if}}
+          
+          Provide a comprehensive summary of:
+          1. What was implemented
+          2. What files were changed
+          3. What tests were created
+          4. What documentation was updated
+          5. Any issues encountered and how they were resolved
+          
+          Format this as a clear overview for commit message generation.
+        output: "change_summary"
+        timeout: 300
+
+      - id: "create-commits"
+        agent: "foundation:git-ops"
+        prompt: |
+          Create high-quality git commits for the {{feature_name}} feature development.
+          
+          Change summary: {{change_summary}}
+          
+          Working directory: {{workspace_dir}}
+          
+          Requirements:
+          - Create logical, atomic commits (not one giant commit)
+          - Follow conventional commit format (feat:, docs:, test:, etc.)
+          - Write clear, descriptive commit messages
+          - Include relevant details in commit body
+          - Reference the feature specification in commits
+          
+          Suggested commit structure:
+          1. feat(sdk): implement {{feature_name}} in TypeScript SDK
+          2. feat(sdk): implement {{feature_name}} in Python SDK
+          3. test: add unit tests for {{feature_name}}
+          {{#if needs_playground}}
+          4. feat(playground): integrate {{feature_name}} examples
+          {{/if}}
+          {{#if needs_docs}}
+          5. docs: add {{feature_name}} documentation
+          {{/if}}
+          
+          Create commits and report what was committed.
+        output: "commit_results"
+        timeout: 600
+
+      - id: "final-verification"
+        agent: "foundation:zen-architect"
+        mode: "ANALYZE"
+        prompt: |
+          Verify that the feature development workflow completed successfully.
+          
+          Feature: {{feature_name}}
+          Change summary: {{change_summary}}
+          Commits: {{commit_results}}
+          
+          Verify:
+          1. All planned work was completed
+          2. Tests are passing
+          3. Documentation is complete
+          4. Commits were created successfully
+          5. No outstanding issues or errors
+          
+          Provide a final verification report confirming completion or identifying any remaining issues.
+        output: "final_verification"
+        timeout: 300
+
+# Usage:
+#   amplifier run "execute sdk-feature-development.yaml with feature_name='retry-with-backoff' feature_description='Add retry logic with exponential backoff'"
+#
+# With options:
+#   amplifier run "execute sdk-feature-development.yaml with feature_name='logging' feature_description='Enhanced logging' needs_playground=false needs_docs=true"
+#
+# Approval Gates:
+#   - After specification: Review and approve the detailed feature spec before implementation
+#   - After implementation: Review SDK code and test results before playground integration
+#   - After playground: Review integration test findings before documentation (if applicable)
+#   - After documentation: Final review of all changes before creating commits
+#
+# This recipe:
+# - Generates detailed feature specification from brief description
+# - Implements feature in both TypeScript and Python SDKs
+# - Creates and runs comprehensive unit tests
+# - Optionally integrates feature in playground with integration tests
+# - Optionally updates SDK documentation
+# - Creates quality git commits using git-ops agent
+# - Includes approval gates at key decision points
+# - Handles errors with retry logic and escalation
+# - Can be customized with needs_playground and needs_docs flags

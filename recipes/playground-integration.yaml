@@ -1,0 +1,129 @@
+name: "playground-integration"
+description: "Integrates SDK feature into playground and runs integration tests"
+version: "1.0.0"
+tags: ["sdk", "playground", "integration", "testing"]
+
+# This sub-recipe integrates an SDK feature into the playground environment
+# Can be run independently for playground-only updates
+
+context:
+  feature_name: ""          # Required: Name of the feature (e.g., "retry-with-backoff")
+  feature_spec: ""          # Required: Detailed feature specification
+  typescript_implementation: ""  # Required: TypeScript implementation details
+  python_implementation: ""      # Required: Python implementation details
+  workspace_dir: "/Users/mpaidiparthy/repos/amplifier-sdk/amplifier-sdk"
+
+steps:
+  - id: "integrate-playground"
+    agent: "foundation:modular-builder"
+    prompt: |
+      Integrate the {{feature_name}} feature into the playground environment.
+      
+      Feature specification: {{feature_spec}}
+      
+      TypeScript SDK implementation: {{typescript_implementation}}
+      Python SDK implementation: {{python_implementation}}
+      
+      Working directory: {{workspace_dir}}
+      
+      Requirements:
+      - Add examples demonstrating the feature in the playground
+      - Update playground UI if needed to showcase the feature
+      - Ensure examples work with both TypeScript and Python SDKs
+      - Follow existing playground patterns and structure
+      - Make the feature discoverable and easy to test
+      
+      Create working playground integration that demonstrates the feature capabilities.
+    output: "playground_integration"
+    timeout: 900
+
+  - id: "run-integration-tests"
+    agent: "bash"
+    prompt: |
+      Run integration tests for the playground with the new feature.
+      
+      Commands:
+      1. cd {{workspace_dir}}/playground
+      2. npm run test:integration -- --grep="{{feature_name}}"
+      
+      If no feature-specific tests exist, run general integration tests:
+      3. npm run test:integration
+      
+      Return the test results and any errors encountered.
+    output: "integration_test_results"
+    timeout: 600
+    on_error: "continue"  # Continue even if tests fail - we'll analyze and fix
+
+  - id: "analyze-integration-results"
+    agent: "foundation:zen-architect"
+    mode: "ANALYZE"
+    prompt: |
+      Analyze the integration test results for the playground:
+      
+      Integration test results: {{integration_test_results}}
+      
+      Determine:
+      1. Did integration tests pass?
+      2. Are there any integration issues?
+      3. Is the feature properly integrated and working in the playground?
+      4. What specific issues need to be addressed?
+      
+      Provide a structured analysis with:
+      - integration_passed: true/false
+      - issues: list of specific issues found (empty if none)
+      - severity: "none", "minor", "major"
+      - recommended_actions: what needs to be done
+      
+      Set integration_passed to "true" only if everything works correctly.
+    output: "integration_analysis"
+    timeout: 300
+
+  - id: "fix-integration-issues"
+    agent: "foundation:bug-hunter"
+    condition: "{{integration_analysis.integration_passed}} == 'false'"
+    prompt: |
+      Fix integration issues found in the playground:
+      
+      Integration analysis: {{integration_analysis}}
+      
+      Feature specification: {{feature_spec}}
+      Playground integration: {{playground_integration}}
+      Integration test results: {{integration_test_results}}
+      
+      Working directory: {{workspace_dir}}
+      
+      Debug and fix the integration issues to make the feature work correctly in the playground.
+      Focus on:
+      - API integration problems
+      - Configuration issues
+      - Example code errors
+      - Environment setup problems
+    output: "integration_fixes"
+    timeout: 600
+    retry:
+      max_attempts: 1
+      backoff: "linear"
+    on_error: "fail"  # Escalate to user if fix attempt fails
+
+  - id: "verify-integration-fix"
+    agent: "bash"
+    condition: "{{integration_analysis.integration_passed}} == 'false'"
+    prompt: |
+      Re-run integration tests after applying fixes.
+      
+      Commands:
+      cd {{workspace_dir}}/playground && npm run test:integration
+      
+      Return test results to verify fixes worked.
+    output: "final_integration_results"
+    timeout: 600
+    on_error: "fail"  # Fail if still broken - needs user intervention
+
+# Usage:
+#   amplifier run "execute playground-integration.yaml with feature_name='retry' feature_spec='...' typescript_implementation='...' python_implementation='...'"
+#
+# This sub-recipe:
+# - Integrates feature into playground with examples
+# - Runs integration tests
+# - Fixes integration issues if found (1 retry attempt)
+# - Ensures feature works end-to-end in playground environment
