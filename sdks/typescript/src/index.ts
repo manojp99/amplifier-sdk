@@ -83,3 +83,17 @@ export type {
   ErrorEvent,
   GenericEvent,
 } from "./types";
+
+// Recipe types
+export {
+  RecipeBuilder,
+  StepBuilder,
+  RecipeExecution,
+  type RecipeDefinition,
+  type RecipeStep,
+  type RecipeSession,
+  type RecipeStepEvent,
+  type RecipeApprovalGate,
+  type RecursionConfig,
+  type RateLimitingConfig,
+} from "./recipes";

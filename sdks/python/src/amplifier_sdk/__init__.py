@@ -22,6 +22,18 @@ Example:
 """
 
 from .client import AmplifierClient
+from .recipes import (
+    RateLimitingConfig,
+    RecipeApprovalGate,
+    RecipeBuilder,
+    RecipeDefinition,
+    RecipeExecution,
+    RecipeSession,
+    RecipeStep,
+    RecipeStepEvent,
+    RecursionConfig,
+    StepBuilder,
+)
 from .types import (
     AgentNode,
     ApprovalRequest,
@@ -53,4 +65,15 @@ __all__ = [
     "BundleDefinition",
     "ModuleConfig",
     "SessionConfig",
+    # Recipe types
+    "RecipeBuilder",
+    "StepBuilder",
+    "RecipeDefinition",
+    "RecipeStep",
+    "RecipeSession",
+    "RecipeStepEvent",
+    "RecipeApprovalGate",
+    "RecipeExecution",
+    "RecursionConfig",
+    "RateLimitingConfig",
 ]

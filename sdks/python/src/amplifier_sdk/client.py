@@ -18,7 +18,6 @@ from .types import (
     BundleDefinition,
     ClientTool,
     Event,
-    ModuleConfig,
     PromptResponse,
     SessionConfig,
     SessionInfo,
@@ -72,6 +71,7 @@ class AmplifierClient:
         self._agent_completed_handlers: set[Any] = set()
         self._agent_hierarchy: dict[str, AgentNode] = {}
         self._behaviors: dict[str, BehaviorDefinition] = {}
+        self._recipes: dict[str, Any] = {}  # Recipe storage
 
     # =========================================================================
     # Client-Side Tools
@@ -1097,6 +1097,261 @@ class AmplifierClient:
             json={"request_id": request_id, "choice": choice},
         )
         return response.status_code == 200
+
+    # =========================================================================
+    # Recipe Management
+    # =========================================================================
+
+    def recipe(self, name: str) -> Any:
+        """Create a new recipe builder.
+
+        Example:
+            ```python
+            recipe = client.recipe("code-review")
+                .description("Automated code review workflow")
+                .version("1.0.0")
+                .step("analyze", lambda s: (
+                    s.agent("foundation:zen-architect")
+                     .prompt("Analyze code")
+                ))
+                .build()
+
+            client.save_recipe(recipe)
+            ```
+        """
+        from .recipes import RecipeBuilder
+
+        return RecipeBuilder(name)
+
+    def save_recipe(self, recipe: Any) -> None:
+        """Save a recipe definition (stores locally in SDK).
+
+        Args:
+            recipe: RecipeDefinition to save
+        """
+        if not hasattr(recipe, "name") or not recipe.name:
+            raise ValueError("Recipe name is required")
+        self._recipes[recipe.name] = recipe
+
+    def get_recipe(self, name: str) -> Any | None:
+        """Get a saved recipe by name.
+
+        Args:
+            name: Recipe name
+
+        Returns:
+            RecipeDefinition if found, None otherwise
+        """
+        return self._recipes.get(name)
+
+    def get_recipes(self) -> list[Any]:
+        """List all saved recipes.
+
+        Returns:
+            List of RecipeDefinition objects
+        """
+        return list(self._recipes.values())
+
+    def delete_recipe(self, name: str) -> bool:
+        """Delete a saved recipe.
+
+        Args:
+            name: Recipe name
+
+        Returns:
+            True if deleted, False if not found
+        """
+        return self._recipes.pop(name, None) is not None
+
+    async def execute_recipe(
+        self,
+        recipe_path_or_name: str,
+        context: dict[str, Any] | None = None,
+        session_id: str | None = None,
+    ) -> Any:
+        """Execute a recipe by name or path.
+
+        Args:
+            recipe_path_or_name: Recipe name (from saved recipes) or path (YAML file)
+            context: Context variables for the recipe
+            session_id: Optional session ID to use (creates new session if not provided)
+
+        Returns:
+            RecipeExecution monitor for tracking progress
+
+        Example:
+            ```python
+            # Execute saved recipe
+            execution = await client.execute_recipe("code-review", {
+                "file_path": "src/auth.py",
+                "severity": "high"
+            })
+
+            # Execute recipe from file
+            execution = await client.execute_recipe("@recipes:code-review.yaml", {
+                "file_path": "src/auth.py"
+            })
+
+            # Monitor progress
+            execution.on("step.started", lambda step: print(f"Step: {step.step_id}"))
+            ```
+        """
+        from .recipes import RecipeExecution
+
+        if context is None:
+            context = {}
+
+        # Determine if it's a saved recipe or a path
+        saved_recipe = self._recipes.get(recipe_path_or_name)
+        recipe_path = None if saved_recipe else recipe_path_or_name
+
+        # Create session if not provided
+        sid = session_id or (await self.create_session()).id
+
+        # Build prompt to execute recipe
+        if saved_recipe:
+            prompt = f'Execute the recipe "{recipe_path_or_name}" using the recipes tool.'
+        else:
+            prompt = f'Execute the recipe at "{recipe_path}" using the recipes tool.'
+
+        # Add context if provided
+        if context:
+            context_str = ", ".join(f'{k}="{v}"' for k, v in context.items())
+            prompt += f" Pass these context variables: {context_str}."
+
+        # Create execution monitor
+        execution = RecipeExecution(self, sid, recipe_path_or_name)
+
+        # Start execution in background
+        # Note: This is a simplified implementation
+        # Real version would need proper async task management
+        import asyncio
+
+        async def run_recipe() -> None:
+            try:
+                async for event in self.prompt(sid, prompt):
+                    execution.handle_event(event)
+            except Exception as error:
+                execution.handle_error(error)
+
+        asyncio.create_task(run_recipe())
+
+        return execution
+
+    async def list_recipe_sessions(self) -> list[Any]:
+        """List active recipe sessions.
+
+        Returns:
+            List of RecipeSession objects
+
+        Example:
+            ```python
+            sessions = await client.list_recipe_sessions()
+            for session in sessions:
+                print(f"{session.recipe_name}: {session.status}")
+            ```
+        """
+        # Use recipes tool to list sessions
+        session = await self.create_session()
+
+        try:
+            # For now, return empty list
+            # Real implementation would parse AI response
+            return []
+        finally:
+            await self.delete_session(session.id)
+
+    async def resume_recipe(self, session_id: str) -> Any:
+        """Resume an interrupted recipe.
+
+        Args:
+            session_id: Recipe session ID to resume
+
+        Returns:
+            RecipeExecution monitor
+
+        Example:
+            ```python
+            execution = await client.resume_recipe("recipe_session_123")
+            execution.on("step.completed", lambda s: print(f"Resumed: {s.step_id}"))
+            ```
+        """
+        from .recipes import RecipeExecution
+
+        # Verify session exists
+        await self.get_session(session_id)
+
+        # Create execution monitor for existing session
+        execution = RecipeExecution(self, session_id, "resumed")
+
+        # Resume execution
+        prompt = "Resume the recipe execution from where it left off."
+
+        import asyncio
+
+        async def run_resume() -> None:
+            try:
+                async for event in self.prompt(session_id, prompt):
+                    execution.handle_event(event)
+            except Exception as error:
+                execution.handle_error(error)
+
+        asyncio.create_task(run_resume())
+
+        return execution
+
+    async def approve_recipe_stage(self, session_id: str, stage_name: str) -> None:
+        """Approve a recipe stage/step.
+
+        Args:
+            session_id: Recipe session ID
+            stage_name: Name of the stage to approve
+
+        Example:
+            ```python
+            await client.approve_recipe_stage(session_id, "deploy-to-production")
+            ```
+        """
+        prompt = f'Approve the "{stage_name}" stage in the current recipe execution.'
+        await self.prompt_sync(session_id, prompt)
+
+    async def deny_recipe_stage(
+        self, session_id: str, stage_name: str, reason: str | None = None
+    ) -> None:
+        """Deny a recipe stage/step.
+
+        Args:
+            session_id: Recipe session ID
+            stage_name: Name of the stage to deny
+            reason: Optional reason for denial
+
+        Example:
+            ```python
+            await client.deny_recipe_stage(session_id, "deploy", "Tests are failing")
+            ```
+        """
+        prompt = f'Deny the "{stage_name}" stage in the current recipe execution.'
+        if reason:
+            prompt += f" Reason: {reason}"
+        await self.prompt_sync(session_id, prompt)
+
+    async def cancel_recipe(self, session_id: str) -> None:
+        """Cancel a running recipe.
+
+        Args:
+            session_id: Recipe session ID to cancel
+
+        Example:
+            ```python
+            await client.cancel_recipe(session_id)
+            ```
+        """
+        # Send cancel command
+        prompt = "Cancel the current recipe execution."
+        await self.prompt_sync(session_id, prompt)
+
+        # Clean up session
+        await self.delete_session(session_id)
 
     # =========================================================================
     # Convenience Methods

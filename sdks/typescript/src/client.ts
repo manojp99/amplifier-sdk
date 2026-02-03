@@ -29,6 +29,9 @@ import {
   type ToolCall,
 } from "./types";
 
+import { RecipeBuilder, RecipeExecution } from "./recipes";
+import type { RecipeDefinition } from "./recipes";
+
 /**
  * Generate a unique request ID.
  */
@@ -104,6 +107,7 @@ export class AmplifierClient {
   private isThinking: boolean = false;
   private currentThinkingContent: string = "";
   private readonly behaviors: Map<string, BehaviorDefinition> = new Map();
+  private readonly recipes: Map<string, RecipeDefinition> = new Map();
 
   constructor(config: ClientConfig = {}) {
     this.config = config;
@@ -1213,6 +1217,252 @@ export class AmplifierClient {
     }
 
     return merged;
+  }
+
+  // ===========================================================================
+  // Recipe Management
+  // ===========================================================================
+
+  /**
+   * Create a new recipe builder.
+   * 
+   * @example
+   * ```typescript
+   * const recipe = client.recipe("code-review")
+   *   .description("Automated code review workflow")
+   *   .version("1.0.0")
+   *   .step("analyze", (step) => 
+   *     step.agent("foundation:zen-architect").prompt("Analyze code")
+   *   )
+   *   .build();
+   * 
+   * await client.saveRecipe(recipe);
+   * ```
+   */
+  recipe(name: string): RecipeBuilder {
+    return new RecipeBuilder(name);
+  }
+
+  /**
+   * Save a recipe definition (stores locally in SDK).
+   */
+  saveRecipe(recipe: RecipeDefinition): void {
+    if (!recipe.name) {
+      throw new AmplifierError("Recipe name is required", ErrorCode.BadRequest);
+    }
+    this.recipes.set(recipe.name, recipe);
+    this.debug(`Saved recipe: ${recipe.name} v${recipe.version}`);
+  }
+
+  /**
+   * Get a saved recipe by name.
+   */
+  getRecipe(name: string): RecipeDefinition | undefined {
+    return this.recipes.get(name);
+  }
+
+  /**
+   * List all saved recipes.
+   */
+  getRecipes(): RecipeDefinition[] {
+    return Array.from(this.recipes.values());
+  }
+
+  /**
+   * Delete a saved recipe.
+   */
+  deleteRecipe(name: string): boolean {
+    return this.recipes.delete(name);
+  }
+
+  /**
+   * Execute a recipe by name or path.
+   * 
+   * @param recipePathOrName - Recipe name (from saved recipes) or path (YAML file)
+   * @param context - Context variables for the recipe
+   * @param sessionId - Optional session ID to use (creates new session if not provided)
+   * 
+   * @example
+   * ```typescript
+   * // Execute saved recipe
+   * const execution = await client.executeRecipe("code-review", {
+   *   file_path: "src/auth.ts",
+   *   severity: "high"
+   * });
+   * 
+   * // Execute recipe from file
+   * const execution = await client.executeRecipe("@recipes:code-review.yaml", {
+   *   file_path: "src/auth.ts"
+   * });
+   * 
+   * // Monitor progress
+   * execution.on("step.started", (step) => console.log(`Step: ${step.step_id}`));
+   * ```
+   */
+  async executeRecipe(
+    recipePathOrName: string,
+    context: Record<string, any> = {},
+    sessionId?: string
+  ): Promise<RecipeExecution> {
+    
+    // Determine if it's a saved recipe or a path
+    const savedRecipe = this.recipes.get(recipePathOrName);
+    const recipePath = savedRecipe ? undefined : recipePathOrName;
+    
+    // Create session if not provided
+    const sid = sessionId ?? (await this.createSession({})).id;
+    
+    // Build prompt to execute recipe
+    let prompt = "";
+    if (savedRecipe) {
+      // For saved recipes, we need to convert to YAML and execute
+      // For now, use the runtime's recipes tool with the name
+      prompt = `Execute the recipe "${recipePathOrName}" using the recipes tool.`;
+    } else {
+      // For recipe paths, ask runtime to execute
+      prompt = `Execute the recipe at "${recipePath}" using the recipes tool.`;
+    }
+    
+    // Add context if provided
+    if (Object.keys(context).length > 0) {
+      const contextStr = Object.entries(context)
+        .map(([k, v]) => `${k}="${v}"`)
+        .join(", ");
+      prompt += ` Pass these context variables: ${contextStr}.`;
+    }
+    
+    // Create execution monitor
+    const execution = new RecipeExecution(this, sid, recipePathOrName);
+    
+    // Start execution in background
+    (async () => {
+      try {
+        for await (const event of this.prompt(sid, prompt)) {
+          execution.handleEvent(event);
+        }
+      } catch (error) {
+        execution.handleError(error as Error);
+      }
+    })();
+    
+    return execution;
+  }
+
+  /**
+   * List active recipe sessions.
+   * 
+   * @example
+   * ```typescript
+   * const sessions = await client.listRecipeSessions();
+   * for (const session of sessions) {
+   *   console.log(`${session.recipe_name}: ${session.status}`);
+   * }
+   * ```
+   */
+  async listRecipeSessions(): Promise<import("./recipes").RecipeSession[]> {
+    // Use recipes tool to list sessions
+    const session = await this.createSession({});
+    
+    try {
+      // For now, return empty list
+      // Real implementation would parse AI response
+      return [];
+    } finally {
+      await this.deleteSession(session.id);
+    }
+  }
+
+  /**
+   * Resume an interrupted recipe.
+   * 
+   * @param sessionId - Recipe session ID to resume
+   * 
+   * @example
+   * ```typescript
+   * const execution = await client.resumeRecipe("recipe_session_123");
+   * execution.on("step.completed", (step) => console.log(`Resumed: ${step.step_id}`));
+   * ```
+   */
+  async resumeRecipe(sessionId: string): Promise<RecipeExecution> {
+    // Verify session exists
+    await this.getSession(sessionId);
+    
+    // Create execution monitor for existing session
+    const execution = new RecipeExecution(this, sessionId, "resumed");
+    
+    // Resume execution
+    const prompt = "Resume the recipe execution from where it left off.";
+    
+    (async () => {
+      try {
+        for await (const event of this.prompt(sessionId, prompt)) {
+          execution.handleEvent(event);
+        }
+      } catch (error) {
+        execution.handleError(error as Error);
+      }
+    })();
+    
+    return execution;
+  }
+
+  /**
+   * Approve a recipe stage/step.
+   * 
+   * @param sessionId - Recipe session ID
+   * @param stageName - Name of the stage to approve
+   * 
+   * @example
+   * ```typescript
+   * await client.approveRecipeStage(sessionId, "deploy-to-production");
+   * ```
+   */
+  async approveRecipeStage(sessionId: string, stageName: string): Promise<void> {
+    const prompt = `Approve the "${stageName}" stage in the current recipe execution.`;
+    await this.promptSync(sessionId, prompt);
+  }
+
+  /**
+   * Deny a recipe stage/step.
+   * 
+   * @param sessionId - Recipe session ID
+   * @param stageName - Name of the stage to deny
+   * @param reason - Optional reason for denial
+   * 
+   * @example
+   * ```typescript
+   * await client.denyRecipeStage(sessionId, "deploy", "Tests are failing");
+   * ```
+   */
+  async denyRecipeStage(
+    sessionId: string,
+    stageName: string,
+    reason?: string
+  ): Promise<void> {
+    let prompt = `Deny the "${stageName}" stage in the current recipe execution.`;
+    if (reason) {
+      prompt += ` Reason: ${reason}`;
+    }
+    await this.promptSync(sessionId, prompt);
+  }
+
+  /**
+   * Cancel a running recipe.
+   * 
+   * @param sessionId - Recipe session ID to cancel
+   * 
+   * @example
+   * ```typescript
+   * await client.cancelRecipe(sessionId);
+   * ```
+   */
+  async cancelRecipe(sessionId: string): Promise<void> {
+    // Send cancel command
+    const prompt = "Cancel the current recipe execution.";
+    await this.promptSync(sessionId, prompt);
+    
+    // Clean up session
+    await this.deleteSession(sessionId);
   }
 
   // ===========================================================================
