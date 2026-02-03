@@ -237,8 +237,15 @@ for await (const event of client.prompt(sessionId, "Hello")) {
       break;
       
     case "agent.spawned":
-      // AI delegated to a specialist
+      // AI delegated to a specialist agent
       console.log(`🤖 Spawned: ${event.data.agent_name}`);
+      // Use client.onAgentSpawned() for automatic tracking
+      break;
+      
+    case "agent.completed":
+      // Sub-agent finished
+      console.log(`✅ Completed: ${event.data.agent_id}`);
+      // Use client.onAgentCompleted() for automatic tracking
       break;
   }
 }
@@ -353,6 +360,30 @@ for await (const event of session.send("Let's continue")) {
     process.stdout.write(event.data.delta);
   }
 }
+```
+
+### 6. Agent Hierarchy Tracking
+
+```typescript
+// Track multi-agent workflows
+client.onAgentSpawned((info) => {
+  console.log(`🤖 Agent spawned: ${info.agentName}`);
+  updateAgentTreeUI(client.getAgentHierarchy());
+});
+
+client.onAgentCompleted((info) => {
+  console.log(`✅ Agent completed: ${info.agentId}`);
+  updateAgentTreeUI(client.getAgentHierarchy());
+});
+
+// Run complex task
+for await (const event of client.prompt(sessionId, "Analyze this codebase")) {
+  // Agent hierarchy is automatically tracked
+}
+
+// Visualize the delegation tree
+const hierarchy = client.getAgentHierarchy();
+console.log(`Total agents: ${hierarchy.size}`);
 ```
 
 ---

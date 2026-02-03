@@ -444,6 +444,207 @@ client.onApproval(async (request) => {
 
 ---
 
+## Agent Spawning Visibility
+
+Track multi-agent workflows by subscribing to agent lifecycle events.
+
+### onAgentSpawned()
+
+Register a handler for agent spawned events.
+
+**TypeScript:**
+```typescript
+onAgentSpawned(handler: AgentSpawnedHandler): void
+```
+
+**Python:**
+```python
+def on_agent_spawned(handler: AgentSpawnedHandler) -> None
+```
+
+**Parameters:**
+- `handler` - Callback function for agent spawned events
+
+**Handler Info:**
+- `agentId` / `agent_id` (string) - Unique agent ID
+- `agentName` / `agent_name` (string) - Agent name/type
+- `parentId` / `parent_id` (string | null) - Parent agent ID, or null for root
+- `timestamp` (string) - ISO timestamp
+
+**Example:**
+```typescript
+client.onAgentSpawned((info) => {
+  console.log(`🤖 ${info.agentName} spawned (${info.agentId})`);
+  if (info.parentId) {
+    console.log(`   Delegated by: ${info.parentId}`);
+  }
+});
+```
+
+**Python Example:**
+```python
+def handle_spawn(info):
+    print(f"🤖 {info['agent_name']} spawned ({info['agent_id']})")
+    if info['parent_id']:
+        print(f"   Delegated by: {info['parent_id']}")
+
+client.on_agent_spawned(handle_spawn)
+```
+
+---
+
+### offAgentSpawned()
+
+Unregister an agent spawned handler.
+
+**TypeScript:**
+```typescript
+offAgentSpawned(handler: AgentSpawnedHandler): void
+```
+
+**Python:**
+```python
+def off_agent_spawned(handler: AgentSpawnedHandler) -> None
+```
+
+---
+
+### onAgentCompleted()
+
+Register a handler for agent completed events.
+
+**TypeScript:**
+```typescript
+onAgentCompleted(handler: AgentCompletedHandler): void
+```
+
+**Python:**
+```python
+def on_agent_completed(handler: AgentCompletedHandler) -> None
+```
+
+**Parameters:**
+- `handler` - Callback function for agent completed events
+
+**Handler Info:**
+- `agentId` / `agent_id` (string) - Agent ID
+- `result` (string | undefined) - Agent result
+- `error` (string | undefined) - Error message if failed
+- `timestamp` (string) - ISO timestamp
+
+**Example:**
+```typescript
+client.onAgentCompleted((info) => {
+  console.log(`✅ Agent completed: ${info.agentId}`);
+  if (info.error) {
+    console.error(`   Error: ${info.error}`);
+  } else if (info.result) {
+    console.log(`   Result: ${info.result.substring(0, 100)}...`);
+  }
+});
+```
+
+---
+
+### offAgentCompleted()
+
+Unregister an agent completed handler.
+
+**TypeScript:**
+```typescript
+offAgentCompleted(handler: AgentCompletedHandler): void
+```
+
+**Python:**
+```python
+def off_agent_completed(handler: AgentCompletedHandler) -> None
+```
+
+---
+
+### getAgentHierarchy()
+
+Get the current agent hierarchy tree.
+
+**TypeScript:**
+```typescript
+getAgentHierarchy(): Map<string, AgentNode>
+```
+
+**Python:**
+```python
+def get_agent_hierarchy() -> dict[str, AgentNode]
+```
+
+**Returns:** Map/dict of agent IDs to `AgentNode` objects representing parent/child relationships
+
+**Example:**
+```typescript
+const hierarchy = client.getAgentHierarchy();
+
+// Find root agents (no parent)
+const rootAgents = Array.from(hierarchy.values())
+  .filter(node => node.parentId === null);
+
+// Build tree visualization
+function printTree(agentId: string, indent = 0) {
+  const node = hierarchy.get(agentId);
+  if (!node) return;
+  
+  console.log('  '.repeat(indent) + `${node.agentName} (${node.agentId})`);
+  node.children.forEach(childId => printTree(childId, indent + 1));
+}
+
+rootAgents.forEach(node => printTree(node.agentId));
+```
+
+**Python Example:**
+```python
+hierarchy = client.get_agent_hierarchy()
+
+# Find root agents
+root_agents = [
+    node for node in hierarchy.values() 
+    if node.parent_id is None
+]
+
+# Print tree
+def print_tree(agent_id: str, indent: int = 0):
+    node = hierarchy.get(agent_id)
+    if not node:
+        return
+    print('  ' * indent + f"{node.agent_name} ({node.agent_id})")
+    for child_id in node.children:
+        print_tree(child_id, indent + 1)
+
+for node in root_agents:
+    print_tree(node.agent_id)
+```
+
+---
+
+### clearAgentHierarchy()
+
+Clear the agent hierarchy. Useful when starting a new task or resetting state.
+
+**TypeScript:**
+```typescript
+clearAgentHierarchy(): void
+```
+
+**Python:**
+```python
+def clear_agent_hierarchy() -> None
+```
+
+**Example:**
+```typescript
+// Between major tasks
+client.clearAgentHierarchy();
+```
+
+---
+
 ## Approval System
 
 ### respondApproval()
@@ -686,6 +887,50 @@ class BundleDefinition:
     client_tools: list[str] = field(default_factory=list)
     # ... (same fields as TypeScript)
 ```
+
+---
+
+### AgentNode
+
+Agent hierarchy node for tracking parent/child relationships.
+
+**TypeScript:**
+```typescript
+interface AgentNode {
+  agentId: string;
+  agentName: string;
+  parentId: string | null;
+  children: string[];
+  spawnedAt: string;
+  completedAt: string | null;
+  result?: string;
+  error?: string;
+}
+```
+
+**Python:**
+```python
+@dataclass
+class AgentNode:
+    agent_id: str
+    agent_name: str
+    parent_id: str | None
+    children: list[str]
+    spawned_at: str
+    completed_at: str | None
+    result: str | None
+    error: str | None
+```
+
+**Fields:**
+- `agentId` / `agent_id` - Unique agent identifier
+- `agentName` / `agent_name` - Agent type (e.g., "foundation:explorer")
+- `parentId` / `parent_id` - Parent agent ID (null for root agents)
+- `children` - Array/list of child agent IDs
+- `spawnedAt` / `spawned_at` - ISO timestamp when agent started
+- `completedAt` / `completed_at` - ISO timestamp when agent finished (null if running)
+- `result` - Agent result text (after completion)
+- `error` - Error message if agent failed
 
 ---
 

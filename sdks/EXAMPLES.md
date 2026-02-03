@@ -206,20 +206,109 @@ client.on("thinking.delta", (event) => {
 });
 ```
 
-### Sub-Agent Tracking
+### Agent Hierarchy Tracking
+
+Track multi-agent workflows with hierarchy visualization:
 
 ```typescript
-const activeAgents = new Set();
+import { AmplifierClient } from "amplifier-sdk";
 
-client.on("agent.spawned", (event) => {
-  activeAgents.add(event.data.agent_id);
-  showNotification(`Delegating to ${event.data.agent_name}...`);
+const client = new AmplifierClient();
+
+// Track agent lifecycle
+client.onAgentSpawned((info) => {
+  console.log(`\n🤖 Agent spawned: ${info.agentName}`);
+  if (info.parentId) {
+    console.log(`   Delegated by: ${info.parentId}`);
+  }
 });
 
-client.on("agent.completed", (event) => {
-  activeAgents.delete(event.data.agent_id);
-  showNotification(`✓ ${event.data.agent_name} completed`);
+client.onAgentCompleted((info) => {
+  console.log(`\n✅ Agent completed: ${info.agentId}`);
+  if (info.result) {
+    console.log(`   Result: ${info.result.substring(0, 100)}...`);
+  }
 });
+
+// Run a task that uses multiple agents
+const session = await client.createSession({ bundle: "foundation" });
+
+for await (const event of client.prompt(session.id, "Analyze this project")) {
+  if (event.type === "content.delta") {
+    process.stdout.write(event.data.delta);
+  }
+}
+
+// Print the agent tree
+const hierarchy = client.getAgentHierarchy();
+printAgentTree(hierarchy);
+
+function printAgentTree(hierarchy: Map<string, AgentNode>) {
+  // Find root agents
+  const roots = Array.from(hierarchy.values())
+    .filter(node => node.parentId === null);
+  
+  console.log("\n\n📊 Agent Delegation Tree:");
+  roots.forEach(root => printNode(root, hierarchy, 0));
+}
+
+function printNode(node: AgentNode, hierarchy: Map<string, AgentNode>, depth: number) {
+  const indent = "  ".repeat(depth);
+  const status = node.completedAt ? "✅" : "⏳";
+  console.log(`${indent}${status} ${node.agentName}`);
+  
+  node.children.forEach(childId => {
+    const child = hierarchy.get(childId);
+    if (child) printNode(child, hierarchy, depth + 1);
+  });
+}
+```
+
+**Python:**
+```python
+from amplifier_sdk import AmplifierClient
+
+async with AmplifierClient() as client:
+    # Track agent lifecycle
+    def handle_spawn(info):
+        print(f"\n🤖 Agent spawned: {info['agent_name']}")
+        if info['parent_id']:
+            print(f"   Delegated by: {info['parent_id']}")
+    
+    def handle_completion(info):
+        print(f"\n✅ Agent completed: {info['agent_id']}")
+        if info.get('result'):
+            print(f"   Result: {info['result'][:100]}...")
+    
+    client.on_agent_spawned(handle_spawn)
+    client.on_agent_completed(handle_completion)
+    
+    # Run task
+    session = await client.create_session(bundle="foundation")
+    async for event in client.prompt(session.id, "Analyze this project"):
+        if event.type == "content.delta":
+            print(event.data["delta"], end="", flush=True)
+    
+    # Print hierarchy
+    hierarchy = client.get_agent_hierarchy()
+    print_agent_tree(hierarchy)
+
+def print_agent_tree(hierarchy: dict):
+    roots = [node for node in hierarchy.values() if node.parent_id is None]
+    
+    print("\n\n📊 Agent Delegation Tree:")
+    for root in roots:
+        print_node(root, hierarchy, 0)
+
+def print_node(node, hierarchy, depth):
+    indent = "  " * depth
+    status = "✅" if node.completed_at else "⏳"
+    print(f"{indent}{status} {node.agent_name}")
+    
+    for child_id in node.children:
+        child = hierarchy.get(child_id)
+        if child:
+            print_node(child, hierarchy, depth + 1)
 ```
 
 ---
@@ -276,6 +365,136 @@ client.onApproval(async (request) => {
   // Default: approve
   return true;
 });
+```
+
+## Visualizing Multi-Agent Workflows
+
+Track and visualize complex agent delegation patterns:
+
+### React Component Example
+
+```typescript
+import { useState, useEffect } from "react";
+import { AmplifierClient, type AgentNode } from "amplifier-sdk";
+
+function AgentTreeVisualization() {
+  const [client] = useState(() => new AmplifierClient());
+  const [hierarchy, setHierarchy] = useState<Map<string, AgentNode>>(new Map());
+  const [activeAgents, setActiveAgents] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    // Update hierarchy when agents spawn
+    client.onAgentSpawned((info) => {
+      setActiveAgents(prev => new Set(prev).add(info.agentId));
+      setHierarchy(client.getAgentHierarchy());
+    });
+
+    // Update when agents complete
+    client.onAgentCompleted((info) => {
+      setActiveAgents(prev => {
+        const next = new Set(prev);
+        next.delete(info.agentId);
+        return next;
+      });
+      setHierarchy(client.getAgentHierarchy());
+    });
+  }, []);
+
+  const rootAgents = Array.from(hierarchy.values())
+    .filter(node => node.parentId === null);
+
+  return (
+    <div className="agent-tree">
+      <h3>Agent Activity</h3>
+      <p>Active: {activeAgents.size}</p>
+      {rootAgents.map(root => (
+        <AgentNodeComponent 
+          key={root.agentId} 
+          node={root} 
+          hierarchy={hierarchy}
+          activeAgents={activeAgents}
+        />
+      ))}
+    </div>
+  );
+}
+
+function AgentNodeComponent({ node, hierarchy, activeAgents, depth = 0 }) {
+  const isActive = activeAgents.has(node.agentId);
+  const status = node.completedAt ? "✅" : isActive ? "⏳" : "⏸️";
+  
+  return (
+    <div style={{ marginLeft: `${depth * 20}px` }}>
+      <div className={`agent-node ${isActive ? "active" : ""}`}>
+        <span className="status">{status}</span>
+        <span className="name">{node.agentName}</span>
+        {node.error && <span className="error">❌ {node.error}</span>}
+      </div>
+      {node.children.map(childId => {
+        const child = hierarchy.get(childId);
+        return child ? (
+          <AgentNodeComponent
+            key={childId}
+            node={child}
+            hierarchy={hierarchy}
+            activeAgents={activeAgents}
+            depth={depth + 1}
+          />
+        ) : null;
+      })}
+    </div>
+  );
+}
+```
+
+### Analytics and Monitoring
+
+```typescript
+// Track agent performance
+const agentMetrics = new Map();
+
+client.onAgentSpawned((info) => {
+  agentMetrics.set(info.agentId, {
+    name: info.agentName,
+    startTime: Date.now(),
+    parentId: info.parentId
+  });
+});
+
+client.onAgentCompleted((info) => {
+  const metrics = agentMetrics.get(info.agentId);
+  if (metrics) {
+    const duration = Date.now() - metrics.startTime;
+    
+    // Send to analytics
+    analytics.track("agent_execution", {
+      agentName: metrics.name,
+      duration,
+      success: !info.error,
+      error: info.error
+    });
+    
+    console.log(`📊 ${metrics.name}: ${duration}ms`);
+  }
+});
+```
+
+### Memory Management
+
+```typescript
+// Clear hierarchy between major tasks to prevent memory growth
+const session = await client.createSession({ bundle: "foundation" });
+
+// Task 1
+await runPrompt(session.id, "First task");
+client.clearAgentHierarchy();
+
+// Task 2
+await runPrompt(session.id, "Second task");
+client.clearAgentHierarchy();
+
+// Task 3
+await runPrompt(session.id, "Third task");
 ```
 
 ---

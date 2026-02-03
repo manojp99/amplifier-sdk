@@ -13,6 +13,7 @@ Multi-language client libraries for building applications powered by AI agents.
 - ✅ **Event Correlation** - Match tool calls to results with `toolCallId`
 - ✅ **Session Management** - Create, resume, and manage conversations
 - ✅ **Approval Flow** - Human-in-the-loop for sensitive operations
+- ✅ **Agent Visibility** - Track multi-agent workflows with hierarchy tracking
 - ✅ **Error Handling** - Structured errors with retry detection
 
 ## Installation
