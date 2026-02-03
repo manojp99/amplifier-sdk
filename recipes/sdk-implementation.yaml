@@ -84,29 +84,19 @@ steps:
     timeout: 600
 
   - id: "run-typescript-tests"
-    agent: "bash"
-    prompt: |
-      Run the TypeScript SDK tests for the new feature.
-      
-      Commands to execute:
-      1. cd {{workspace_dir}}/typescript
-      2. npm test -- --testPathPattern={{feature_name}}
-      
-      Return the test results.
+    type: "bash"
+    command: |
+      cd {{workspace_dir}}/typescript
+      npm test -- --testPathPattern={{feature_name}}
     output: "typescript_test_results"
     timeout: 300
     on_error: "fail"  # STOP if tests fail - human must review and fix
 
   - id: "run-python-tests"
-    agent: "bash"
-    prompt: |
-      Run the Python SDK tests for the new feature.
-      
-      Commands to execute:
-      1. cd {{workspace_dir}}/python
-      2. pytest -v tests/test_{{feature_name}}.py
-      
-      Return the test results.
+    type: "bash"
+    command: |
+      cd {{workspace_dir}}/python
+      pytest -v tests/test_{{feature_name}}.py
     output: "python_test_results"
     timeout: 300
     on_error: "fail"  # STOP if tests fail - human must review and fix

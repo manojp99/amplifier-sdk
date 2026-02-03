@@ -38,18 +38,10 @@ steps:
     timeout: 900
 
   - id: "run-integration-tests"
-    agent: "bash"
-    prompt: |
-      Run integration tests for the playground with the new feature.
-      
-      Commands:
-      1. cd {{workspace_dir}}/playground
-      2. npm run test:integration -- --grep="{{feature_name}}"
-      
-      If no feature-specific tests exist, run general integration tests:
-      3. npm run test:integration
-      
-      Return the test results and any errors encountered.
+    type: "bash"
+    command: |
+      cd {{workspace_dir}}/playground
+      npm run test:integration -- --grep="{{feature_name}}" || npm run test:integration
     output: "integration_test_results"
     timeout: 600
     on_error: "fail"  # STOP if integration tests fail - human must review and fix
