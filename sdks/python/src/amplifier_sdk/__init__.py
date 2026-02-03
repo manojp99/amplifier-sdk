@@ -21,6 +21,18 @@ Example:
     ```
 """
 
+from .catalog import (
+    CONTEXTS,
+    HOOKS,
+    MODULE_CATALOG,
+    ORCHESTRATORS,
+    PROVIDERS,
+    TOOLS,
+    ModuleInfo,
+    find_module,
+    get_all_modules,
+    get_modules_by_type,
+)
 from .client import AmplifierClient
 from .recipes import (
     RateLimitingConfig,
@@ -56,6 +68,18 @@ from .types import (
 __version__ = "1.0.0"
 
 __all__ = [
+    # Module catalog
+    "MODULE_CATALOG",
+    "PROVIDERS",
+    "TOOLS",
+    "ORCHESTRATORS",
+    "CONTEXTS",
+    "HOOKS",
+    "ModuleInfo",
+    "get_modules_by_type",
+    "find_module",
+    "get_all_modules",
+    # Client
     "AgentNode",
     "AmplifierClient",
     "Event",

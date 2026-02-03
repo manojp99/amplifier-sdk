@@ -1309,8 +1309,8 @@ export class AmplifierClient {
     const savedRecipe = this.recipes.get(recipePathOrName);
     const recipePath = savedRecipe ? undefined : recipePathOrName;
     
-    // Create session if not provided
-    const sid = sessionId ?? (await this.createSession({})).id;
+    // Create session if not provided (with foundation bundle for recipes tool)
+    const sid = sessionId ?? (await this.createSession({ bundle: "foundation" })).id;
     
     // Build prompt to execute recipe
     let prompt = "";

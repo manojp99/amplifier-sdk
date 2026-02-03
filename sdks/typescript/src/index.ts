@@ -103,3 +103,17 @@ export {
   type RecursionConfig,
   type RateLimitingConfig,
 } from "./recipes";
+
+// Module catalog
+export {
+  MODULE_CATALOG,
+  PROVIDERS,
+  TOOLS,
+  ORCHESTRATORS,
+  CONTEXTS,
+  HOOKS,
+  getModulesByType,
+  findModule,
+  getAllModules,
+  type ModuleInfo,
+} from "./catalog";
