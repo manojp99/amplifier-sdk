@@ -13,10 +13,13 @@ import {
   type AgentNode,
   type AgentSpawnedHandler,
   type AgentCompletedHandler,
+  type BehaviorDefinition,
+  type BundleDefinition,
   type Capabilities,
   type ClientConfig,
   type ClientTool,
   type Event,
+  type ModuleConfig,
   type PromptResponse,
   type RequestInfo,
   type ResponseInfo,
@@ -100,6 +103,7 @@ export class AmplifierClient {
   private readonly thinkingHandlers: Set<ThinkingHandler> = new Set();
   private isThinking: boolean = false;
   private currentThinkingContent: string = "";
+  private readonly behaviors: Map<string, BehaviorDefinition> = new Map();
 
   constructor(config: ClientConfig = {}) {
     this.config = config;
@@ -191,7 +195,17 @@ export class AmplifierClient {
       if (typeof config.bundle === "string") {
         body.bundle = config.bundle;
       } else {
-        body.bundle_definition = this.serializeBundleDefinition(config.bundle);
+        let bundleDefinition = config.bundle;
+        
+        // Merge behaviors if specified
+        if (bundleDefinition.behaviors && bundleDefinition.behaviors.length > 0) {
+          bundleDefinition = this.mergeBehaviors(bundleDefinition, bundleDefinition.behaviors);
+          // Remove behaviors field after merging (runtime doesn't understand it)
+          const { behaviors, ...rest } = bundleDefinition;
+          bundleDefinition = rest;
+        }
+        
+        body.bundle_definition = this.serializeBundleDefinition(bundleDefinition);
       }
     }
 
@@ -1064,6 +1078,141 @@ export class AmplifierClient {
   clearThinkingState(): void {
     this.isThinking = false;
     this.currentThinkingContent = "";
+  }
+
+  // ===========================================================================
+  // Client-Side Behaviors
+  // ===========================================================================
+
+  /**
+   * Define a reusable behavior.
+   * 
+   * Behaviors are capability packages that can be composed into bundles.
+   * 
+   * @example
+   * ```typescript
+   * const customerSupport = client.defineBehavior({
+   *   name: "customer-support",
+   *   instructions: "Help customers with orders and returns",
+   *   clientTools: ["get-order", "process-refund"]
+   * });
+   * 
+   * // Use in session
+   * const session = await client.createSession({
+   *   bundle: {
+   *     name: "support-agent",
+   *     behaviors: ["customer-support"]
+   *   }
+   * });
+   * ```
+   */
+  defineBehavior(behavior: BehaviorDefinition): BehaviorDefinition {
+    if (!behavior.name) {
+      throw new AmplifierError(
+        "Behavior name is required",
+        ErrorCode.BadRequest
+      );
+    }
+    
+    this.behaviors.set(behavior.name, behavior);
+    this.debug(`Defined behavior: ${behavior.name}`);
+    return behavior;
+  }
+
+  /**
+   * Get a defined behavior by name.
+   */
+  getBehavior(name: string): BehaviorDefinition | undefined {
+    return this.behaviors.get(name);
+  }
+
+  /**
+   * Get all defined behaviors.
+   */
+  getBehaviors(): BehaviorDefinition[] {
+    return Array.from(this.behaviors.values());
+  }
+
+  /**
+   * Remove a behavior definition.
+   */
+  removeBehavior(name: string): boolean {
+    return this.behaviors.delete(name);
+  }
+
+  /**
+   * Merge multiple behaviors into a single bundle configuration.
+   * 
+   * @internal Used by createSession when behaviors are specified
+   */
+  private mergeBehaviors(
+    base: BundleDefinition,
+    behaviorNames: string[]
+  ): BundleDefinition {
+    const merged = { ...base };
+
+    for (const behaviorName of behaviorNames) {
+      const behavior = this.behaviors.get(behaviorName);
+      if (!behavior) {
+        throw new AmplifierError(
+          `Behavior '${behaviorName}' not found. Define it with defineBehavior() first.`,
+          ErrorCode.BadRequest
+        );
+      }
+
+      // Merge instructions (concatenate with newlines)
+      if (behavior.instructions) {
+        merged.instructions = merged.instructions
+          ? `${merged.instructions}\n\n${behavior.instructions}`
+          : behavior.instructions;
+      }
+
+      // Merge tools (deduplicate by module name)
+      if (behavior.tools) {
+        merged.tools = merged.tools || [];
+        const existingModules = new Set(merged.tools.map((t: ModuleConfig) => t.module));
+        for (const tool of behavior.tools) {
+          if (!existingModules.has(tool.module)) {
+            merged.tools.push(tool);
+          }
+        }
+      }
+
+      // Merge clientTools (deduplicate)
+      if (behavior.clientTools) {
+        merged.clientTools = merged.clientTools || [];
+        const existingClientTools = new Set(merged.clientTools);
+        for (const tool of behavior.clientTools) {
+          if (!existingClientTools.has(tool)) {
+            merged.clientTools.push(tool);
+          }
+        }
+      }
+
+      // Merge providers (take first of each provider type)
+      if (behavior.providers) {
+        merged.providers = merged.providers || [];
+        const existingProviders = new Set(merged.providers.map((p: ModuleConfig) => p.module));
+        for (const provider of behavior.providers) {
+          if (!existingProviders.has(provider.module)) {
+            merged.providers.push(provider);
+          }
+        }
+      }
+
+      // Merge hooks
+      if (behavior.hooks) {
+        merged.hooks = merged.hooks || [];
+        const existingHooks = new Set(merged.hooks.map((h: ModuleConfig) => h.module));
+        for (const hook of behavior.hooks) {
+          if (!existingHooks.has(hook.module)) {
+            merged.hooks.push(hook);
+          }
+        }
+      }
+    }
+
+    return merged;
   }
 
   // ===========================================================================

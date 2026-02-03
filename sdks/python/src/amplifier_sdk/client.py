@@ -14,8 +14,11 @@ import httpx
 
 from .types import (
     AgentNode,
+    BehaviorDefinition,
+    BundleDefinition,
     ClientTool,
     Event,
+    ModuleConfig,
     PromptResponse,
     SessionConfig,
     SessionInfo,
@@ -68,6 +71,7 @@ class AmplifierClient:
         self._agent_spawned_handlers: set[Any] = set()
         self._agent_completed_handlers: set[Any] = set()
         self._agent_hierarchy: dict[str, AgentNode] = {}
+        self._behaviors: dict[str, BehaviorDefinition] = {}
 
     # =========================================================================
     # Client-Side Tools
@@ -550,6 +554,155 @@ class AmplifierClient:
         """
         self._is_thinking = False
         self._current_thinking_content = ""
+
+    # =========================================================================
+    # Client-Side Behaviors
+    # =========================================================================
+
+    def define_behavior(self, behavior: BehaviorDefinition) -> BehaviorDefinition:
+        """Define a reusable behavior.
+
+        Behaviors are capability packages that can be composed into bundles.
+
+        Args:
+            behavior: Behavior definition
+
+        Returns:
+            The defined behavior
+
+        Raises:
+            ValueError: If behavior name is missing
+
+        Example:
+            ```python
+            customer_support = client.define_behavior(BehaviorDefinition(
+                name="customer-support",
+                instructions="Help customers with orders and returns",
+                client_tools=["get-order", "process-refund"]
+            ))
+
+            # Use in session
+            session = await client.create_session(
+                bundle=BundleDefinition(
+                    name="support-agent",
+                    behaviors=["customer-support"]
+                )
+            )
+            ```
+        """
+        if not behavior.name:
+            raise ValueError("Behavior name is required")
+
+        self._behaviors[behavior.name] = behavior
+        return behavior
+
+    def get_behavior(self, name: str) -> BehaviorDefinition | None:
+        """Get a defined behavior by name.
+
+        Args:
+            name: Behavior name
+
+        Returns:
+            Behavior definition or None if not found
+        """
+        return self._behaviors.get(name)
+
+    def get_behaviors(self) -> list[BehaviorDefinition]:
+        """Get all defined behaviors.
+
+        Returns:
+            List of all defined behaviors
+        """
+        return list(self._behaviors.values())
+
+    def remove_behavior(self, name: str) -> bool:
+        """Remove a behavior definition.
+
+        Args:
+            name: Behavior name
+
+        Returns:
+            True if removed, False if not found
+        """
+        if name in self._behaviors:
+            del self._behaviors[name]
+            return True
+        return False
+
+    def _merge_behaviors(
+        self, base: BundleDefinition, behavior_names: list[str]
+    ) -> BundleDefinition:
+        """Merge multiple behaviors into a bundle configuration.
+
+        Args:
+            base: Base bundle definition
+            behavior_names: List of behavior names to merge
+
+        Returns:
+            Merged bundle definition
+
+        Raises:
+            ValueError: If behavior not found
+        """
+        merged = BundleDefinition(
+            name=base.name,
+            version=base.version,
+            description=base.description,
+            providers=list(base.providers) if base.providers else [],
+            tools=list(base.tools) if base.tools else [],
+            client_tools=list(base.client_tools) if base.client_tools else [],
+            hooks=list(base.hooks) if base.hooks else [],
+            orchestrator=base.orchestrator,
+            context=base.context,
+            agents=list(base.agents) if base.agents else [],
+            instructions=base.instructions or "",
+            session=base.session,
+            includes=list(base.includes) if base.includes else [],
+        )
+
+        for behavior_name in behavior_names:
+            behavior = self._behaviors.get(behavior_name)
+            if not behavior:
+                raise ValueError(
+                    f"Behavior '{behavior_name}' not found. Define it with define_behavior() first."
+                )
+
+            # Merge instructions
+            if behavior.instructions:
+                if merged.instructions:
+                    merged.instructions = f"{merged.instructions}\n\n{behavior.instructions}"
+                else:
+                    merged.instructions = behavior.instructions
+
+            # Merge tools (deduplicate by module name)
+            if behavior.tools:
+                existing_modules = {t.module for t in merged.tools}
+                for tool in behavior.tools:
+                    if tool.module not in existing_modules:
+                        merged.tools.append(tool)
+
+            # Merge client tools (deduplicate)
+            if behavior.client_tools:
+                existing_client_tools = set(merged.client_tools)
+                for tool in behavior.client_tools:
+                    if tool not in existing_client_tools:
+                        merged.client_tools.append(tool)
+
+            # Merge providers (take first of each provider type)
+            if behavior.providers:
+                existing_providers = {p.module for p in merged.providers}
+                for provider in behavior.providers:
+                    if provider.module not in existing_providers:
+                        merged.providers.append(provider)
+
+            # Merge hooks
+            if behavior.hooks:
+                existing_hooks = {h.module for h in merged.hooks}
+                for hook in behavior.hooks:
+                    if hook.module not in existing_hooks:
+                        merged.hooks.append(hook)
+
+        return merged
 
     # =========================================================================
     # Health & Capabilities

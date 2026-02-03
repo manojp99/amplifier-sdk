@@ -25,6 +25,7 @@ from .client import AmplifierClient
 from .types import (
     AgentNode,
     ApprovalRequest,
+    BehaviorDefinition,
     BundleDefinition,
     ClientTool,
     Event,
@@ -47,6 +48,7 @@ __all__ = [
     "PromptResponse",
     "ToolCall",
     "ApprovalRequest",
+    "BehaviorDefinition",
     "ClientTool",
     "BundleDefinition",
     "ModuleConfig",

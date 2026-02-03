@@ -338,6 +338,28 @@ export interface AgentConfig {
 }
 
 /**
+ * Client-side behavior definition.
+ * 
+ * Behaviors are reusable capability packages that can be composed.
+ */
+export interface BehaviorDefinition {
+  /** Behavior name */
+  name: string;
+  /** Behavior description */
+  description?: string;
+  /** System instructions to merge */
+  instructions?: string;
+  /** Server-side tools to include */
+  tools?: ModuleConfig[];
+  /** Client-side tools to include */
+  clientTools?: string[];
+  /** Providers to use */
+  providers?: ModuleConfig[];
+  /** Hooks to apply */
+  hooks?: ModuleConfig[];
+}
+
+/**
  * Bundle definition for runtime bundle creation.
  * 
  * This allows you to define a complete bundle configuration
@@ -379,6 +401,9 @@ export interface BundleDefinition {
   
   /** Other bundles to compose/inherit from */
   includes?: string[];
+  
+  /** Behaviors to compose (client-side) */
+  behaviors?: string[];
 }
 
 /**

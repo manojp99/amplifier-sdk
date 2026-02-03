@@ -236,6 +236,22 @@ class ClientTool:
 
 
 @dataclass
+class BehaviorDefinition:
+    """Client-side behavior definition.
+
+    Behaviors are reusable capability packages that can be composed.
+    """
+
+    name: str
+    description: str = ""
+    instructions: str = ""
+    tools: list[ModuleConfig] = field(default_factory=list)
+    client_tools: list[str] = field(default_factory=list)
+    providers: list[ModuleConfig] = field(default_factory=list)
+    hooks: list[ModuleConfig] = field(default_factory=list)
+
+
+@dataclass
 class BundleDefinition:
     """Runtime bundle definition.
 
