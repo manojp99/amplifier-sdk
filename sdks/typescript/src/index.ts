@@ -58,6 +58,7 @@ export type {
   ToolCall,
   // Bundle definition
   BundleDefinition,
+  BehaviorDefinition,
   ModuleConfig,
   AgentConfig,
   // MCP server types

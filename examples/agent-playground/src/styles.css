@@ -806,3 +806,355 @@ select.config-input {
 .hierarchy-children {
   margin-left: 0;
 }
+
+/* ============================================================================
+   PHASE 2: Tab Navigation
+   ============================================================================ */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin: 0 auto;
+}
+
+.tab-btn {
+  padding: 8px 16px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.tab-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.tab-btn.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+/* ============================================================================
+   PHASE 3: Sub-Agents, Hooks, MCP
+   ============================================================================ */
+
+.section-description {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-style: italic;
+  margin-top: -4px;
+}
+
+/* Sub-agents */
+.sub-agent-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.sub-agent-item input,
+.sub-agent-item textarea {
+  margin: 0;
+}
+
+.sub-agent-item .btn-icon {
+  align-self: flex-end;
+  margin-top: -8px;
+}
+
+/* Hooks */
+.hook-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.hook-item span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* MCP Servers */
+.mcp-server-item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.mcp-server-item select,
+.mcp-server-item input {
+  flex: 1;
+  margin: 0;
+}
+
+.mcp-server-item .btn-icon {
+  flex-shrink: 0;
+}
+
+/* ============================================================================
+   PHASE 4: Behaviors
+   ============================================================================ */
+
+.behavior-examples {
+  margin-bottom: 16px;
+}
+
+.behavior-examples h4,
+.behavior-list h4,
+.selected-behaviors h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.behavior-list {
+  margin-bottom: 16px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.behavior-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  margin-bottom: 8px;
+}
+
+.behavior-checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  flex: 1;
+}
+
+.behavior-checkbox input[type="checkbox"] {
+  margin-top: 2px;
+  cursor: pointer;
+}
+
+.behavior-checkbox strong {
+  display: block;
+  font-size: 14px;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.behavior-description {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.empty-message {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-style: italic;
+  text-align: center;
+  padding: 20px;
+}
+
+.selected-behaviors {
+  padding: 12px;
+  background: rgba(88, 166, 255, 0.1);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  margin-top: 16px;
+}
+
+.selected-behaviors h4 {
+  margin-bottom: 4px;
+}
+
+/* ============================================================================
+   PHASE 5: Recipes
+   ============================================================================ */
+
+.recipe-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.recipe-form h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-top: 8px;
+  margin-bottom: 4px;
+}
+
+.recipe-step {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  margin-bottom: 8px;
+  position: relative;
+}
+
+.recipe-step-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.recipe-step-option input[type="checkbox"] {
+  cursor: pointer;
+}
+
+.recipe-step .btn-icon {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+
+.recipe-context {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.context-item {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.context-item input {
+  margin: 0;
+}
+
+.recipe-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.recipe-actions .btn {
+  flex: 1;
+}
+
+.recipe-progress {
+  margin-top: 16px;
+  padding: 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.recipe-progress h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.progress-item {
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border-radius: 4px;
+  border-left: 3px solid var(--text-secondary);
+  font-size: 12px;
+}
+
+.progress-item.status-pending {
+  border-left-color: var(--text-secondary);
+  background: rgba(139, 148, 158, 0.1);
+}
+
+.progress-item.status-running {
+  border-left-color: var(--accent);
+  background: rgba(88, 166, 255, 0.1);
+}
+
+.progress-item.status-completed {
+  border-left-color: var(--success);
+  background: rgba(63, 185, 80, 0.1);
+}
+
+.progress-item.status-failed {
+  border-left-color: var(--error);
+  background: rgba(248, 81, 73, 0.1);
+}
+
+.progress-output {
+  margin-top: 6px;
+  padding: 8px;
+  background: var(--bg-primary);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.progress-error {
+  margin-top: 6px;
+  padding: 8px;
+  background: rgba(248, 81, 73, 0.1);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--error);
+}
+
+.recipe-examples {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-color);
+}
+
+.recipe-examples h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+/* ============================================================================
+   Chat Preview Button (when other tabs active)
+   ============================================================================ */
+
+.chat-preview {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 100;
+}
+
+.chat-preview .btn {
+  padding: 12px 20px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
