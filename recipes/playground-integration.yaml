@@ -40,7 +40,7 @@ steps:
   - id: "run-integration-tests"
     type: "bash"
     command: |
-      cd {{workspace_dir}}/playground
+      cd {{workspace_dir}}/examples/agent-playground
       npm run test:integration -- --grep="{{feature_name}}" || npm run test:integration
     output: "integration_test_results"
     timeout: 600

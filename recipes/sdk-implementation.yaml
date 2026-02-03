@@ -86,7 +86,7 @@ steps:
   - id: "run-typescript-tests"
     type: "bash"
     command: |
-      cd {{workspace_dir}}/typescript
+      cd {{workspace_dir}}/sdks/typescript
       npm test -- --testPathPattern={{feature_name}}
     output: "typescript_test_results"
     timeout: 300
@@ -95,7 +95,7 @@ steps:
   - id: "run-python-tests"
     type: "bash"
     command: |
-      cd {{workspace_dir}}/python
+      cd {{workspace_dir}}/sdks/python
       pytest -v tests/test_{{feature_name}}.py
     output: "python_test_results"
     timeout: 300
