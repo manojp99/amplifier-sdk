@@ -440,15 +440,8 @@ export class AmplifierClient {
                   console.error("Approval handler error:", err);
                 }
               }
-
-              // Handle agent spawning visibility
-              if (event.type === "agent.spawned") {
-                await this.handleAgentSpawned(event);
-              } else if (event.type === "agent.completed") {
-                await this.handleAgentCompleted(event);
-              }
               
-              // Emit to registered event handlers
+              // Emit to registered event handlers (includes agent-specific handling)
               await this.emitEvent(event);
               
               yield event;
@@ -652,14 +645,23 @@ export class AmplifierClient {
 
   /**
    * Emit event to registered handlers.
+   * Handles both generic event handlers and agent-specific handlers.
    */
-  private async emitEvent(event: Event): Promise<void> {
-    const handlers = this.eventHandlers.get(event.type);
+  private async emitEvent(event: Partial<Event>): Promise<void> {
+    // Handle agent-specific events first (updates hierarchy + calls specific handlers)
+    if (event.type === "agent.spawned") {
+      await this.handleAgentSpawned(event as Event);
+    } else if (event.type === "agent.completed") {
+      await this.handleAgentCompleted(event as Event);
+    }
+    
+    // Then call generic event handlers
+    const handlers = this.eventHandlers.get(event.type!);
     if (handlers) {
       // Convert Set to Array for iteration (TS compatibility)
       for (const handler of Array.from(handlers)) {
         try {
-          await handler(event);
+          await handler(event as Event);
         } catch (err) {
           console.error(`Event handler error for ${event.type}:`, err);
         }
