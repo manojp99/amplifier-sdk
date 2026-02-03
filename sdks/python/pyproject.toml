@@ -1,14 +1,21 @@
 [project]
 name = "amplifier-sdk"
-version = "0.1.0"
+version = "1.0.0"
 description = "Python SDK for amplifier-app-runtime"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Amplifier Team" }]
 keywords = ["amplifier", "ai", "agent", "sdk"]
+
+[project.urls]
+Homepage = "https://github.com/manojp99/amplifier-sdk"
+Documentation = "https://github.com/manojp99/amplifier-sdk/blob/main/sdks/API_REFERENCE.md"
+Repository = "https://github.com/manojp99/amplifier-sdk"
+"Bug Tracker" = "https://github.com/manojp99/amplifier-sdk/issues"
+
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",

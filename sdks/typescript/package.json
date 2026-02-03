@@ -1,6 +1,6 @@
 {
   "name": "amplifier-sdk",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "TypeScript SDK for amplifier-app-runtime",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
@@ -34,6 +34,15 @@
   ],
   "author": "Amplifier Team",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/manojp99/amplifier-sdk.git",
+    "directory": "sdks/typescript"
+  },
+  "homepage": "https://github.com/manojp99/amplifier-sdk#readme",
+  "bugs": {
+    "url": "https://github.com/manojp99/amplifier-sdk/issues"
+  },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "eslint": "^8.0.0",
