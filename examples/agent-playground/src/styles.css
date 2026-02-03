@@ -711,3 +711,98 @@ select.config-input {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-secondary);
 }
+
+/* Agent Hierarchy Panel */
+.agent-hierarchy-panel {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  margin: 12px;
+  padding: 12px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.hierarchy-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-color);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--accent);
+}
+
+.btn-icon {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 4px 8px;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+
+.btn-icon:hover {
+  opacity: 1;
+}
+
+.agent-hierarchy-tree {
+  font-family: "SF Mono", "Monaco", "Inconsolata", "Fira Mono", monospace;
+  font-size: 12px;
+}
+
+.empty-hierarchy {
+  text-align: center;
+  color: var(--text-secondary);
+  padding: 20px;
+  font-style: italic;
+}
+
+.hierarchy-node {
+  margin: 4px 0;
+}
+
+.hierarchy-node-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.hierarchy-node-content:hover {
+  background: var(--bg-secondary);
+}
+
+.hierarchy-node-content.running {
+  border-left: 3px solid var(--accent);
+  padding-left: 5px;
+}
+
+.hierarchy-node-content.completed {
+  border-left: 3px solid var(--success);
+  padding-left: 5px;
+  opacity: 0.8;
+}
+
+.hierarchy-status {
+  font-size: 14px;
+}
+
+.hierarchy-name {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.hierarchy-id {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.hierarchy-children {
+  margin-left: 0;
+}

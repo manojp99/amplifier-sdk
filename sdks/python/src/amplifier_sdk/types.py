@@ -344,3 +344,41 @@ class SessionConfig:
         if self.behaviors:
             result["behaviors"] = self.behaviors
         return result
+
+
+# =============================================================================
+# Agent Spawning Visibility Types
+# =============================================================================
+
+
+@dataclass
+class AgentNode:
+    """Agent hierarchy node for tracking parent/child relationships.
+
+    Represents a single agent in the multi-agent workflow tree, tracking its
+    relationships to parent and child agents, execution status, and results.
+    """
+
+    agent_id: str
+    """Unique agent ID"""
+
+    agent_name: str
+    """Agent name (bundle/agent type)"""
+
+    parent_id: str | None
+    """Parent agent ID (None for root)"""
+
+    children: list[str] = field(default_factory=list)
+    """Child agent IDs"""
+
+    spawned_at: str = ""
+    """Agent spawn timestamp (ISO format)"""
+
+    completed_at: str | None = None
+    """Agent completion timestamp (None if still running)"""
+
+    result: str | None = None
+    """Agent result (available after completion)"""
+
+    error: str | None = None
+    """Agent error (if failed)"""

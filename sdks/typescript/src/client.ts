@@ -10,6 +10,9 @@ import {
   AmplifierError,
   ConnectionState,
   ErrorCode,
+  type AgentNode,
+  type AgentSpawnedHandler,
+  type AgentCompletedHandler,
   type Capabilities,
   type ClientConfig,
   type ClientTool,
@@ -78,6 +81,9 @@ export class AmplifierClient {
   private readonly clientTools: Map<string, ClientTool> = new Map();
   private readonly eventHandlers: Map<string, Set<EventHandler>> = new Map();
   private approvalHandler: ApprovalHandler | null = null;
+  private readonly agentSpawnedHandlers: Set<AgentSpawnedHandler> = new Set();
+  private readonly agentCompletedHandlers: Set<AgentCompletedHandler> = new Set();
+  private readonly agentHierarchy: Map<string, AgentNode> = new Map();
 
   constructor(config: ClientConfig = {}) {
     this.config = config;
@@ -434,6 +440,13 @@ export class AmplifierClient {
                   console.error("Approval handler error:", err);
                 }
               }
+
+              // Handle agent spawning visibility
+              if (event.type === "agent.spawned") {
+                await this.handleAgentSpawned(event);
+              } else if (event.type === "agent.completed") {
+                await this.handleAgentCompleted(event);
+              }
               
               // Emit to registered event handlers
               await this.emitEvent(event);
@@ -654,6 +667,133 @@ export class AmplifierClient {
     }
   }
 
+  /**
+   * Handle agent.spawned event and update hierarchy.
+   */
+  private async handleAgentSpawned(event: Event): Promise<void> {
+    // Type guard - this should only be called for agent.spawned events
+    if (event.type !== "agent.spawned") return;
+    
+    const data = event.data;
+    const agentId = data.agent_id as string;
+    const agentName = data.agent_name as string;
+    const parentId = (data.parent_id as string | undefined) ?? null;
+    const timestamp = event.timestamp ?? new Date().toISOString();
+
+    // Validate required fields
+    if (!agentId) {
+      this.debug("Warning: agent.spawned event missing agent_id, skipping hierarchy update");
+      return;
+    }
+
+    // Update or create agent node
+    const existingNode = this.agentHierarchy.get(agentId);
+    const node: AgentNode = {
+      agentId,
+      agentName: agentName || existingNode?.agentName || "unknown",
+      parentId,
+      children: existingNode?.children ?? [],
+      spawnedAt: existingNode?.spawnedAt ?? timestamp,
+      completedAt: existingNode?.completedAt ?? null,
+      result: existingNode?.result,
+      error: existingNode?.error,
+    };
+
+    this.agentHierarchy.set(agentId, node);
+
+    // Update parent's children list
+    if (parentId) {
+      const parent = this.agentHierarchy.get(parentId);
+      if (parent && !parent.children.includes(agentId)) {
+        parent.children.push(agentId);
+      } else if (!parent) {
+        // Create placeholder parent if it doesn't exist yet
+        const placeholderParent: AgentNode = {
+          agentId: parentId,
+          agentName: "unknown",
+          parentId: null,
+          children: [agentId],
+          spawnedAt: timestamp,
+          completedAt: null,
+        };
+        this.agentHierarchy.set(parentId, placeholderParent);
+      }
+    }
+
+    // Call registered handlers
+    const info = {
+      agentId,
+      agentName: node.agentName,
+      parentId,
+      timestamp,
+    };
+
+    for (const handler of Array.from(this.agentSpawnedHandlers)) {
+      try {
+        await handler(info);
+      } catch (err) {
+        console.error("Agent spawned handler error:", err);
+      }
+    }
+  }
+
+  /**
+   * Handle agent.completed event and update hierarchy.
+   */
+  private async handleAgentCompleted(event: Event): Promise<void> {
+    // Type guard - this should only be called for agent.completed events
+    if (event.type !== "agent.completed") return;
+    
+    const data = event.data;
+    const agentId = data.agent_id as string;
+    const result = data.result as string | undefined;
+    const error = data.error as string | undefined;
+    const timestamp = event.timestamp ?? new Date().toISOString();
+
+    // Validate required fields
+    if (!agentId) {
+      this.debug("Warning: agent.completed event missing agent_id, skipping hierarchy update");
+      return;
+    }
+
+    // Update existing node or create if completion came before spawn
+    const existingNode = this.agentHierarchy.get(agentId);
+    if (existingNode) {
+      existingNode.completedAt = timestamp;
+      existingNode.result = result;
+      existingNode.error = error;
+    } else {
+      // Completion before spawn - create node with completion data
+      const node: AgentNode = {
+        agentId,
+        agentName: "unknown",
+        parentId: null,
+        children: [],
+        spawnedAt: timestamp,
+        completedAt: timestamp,
+        result,
+        error,
+      };
+      this.agentHierarchy.set(agentId, node);
+    }
+
+    // Call registered handlers
+    const info = {
+      agentId,
+      result,
+      error,
+      timestamp,
+    };
+
+    for (const handler of Array.from(this.agentCompletedHandlers)) {
+      try {
+        await handler(info);
+      } catch (err) {
+        console.error("Agent completed handler error:", err);
+      }
+    }
+  }
+
   // ===========================================================================
   // Approval System
   // ===========================================================================
@@ -715,6 +855,113 @@ export class AmplifierClient {
    */
   onApproval(handler: ApprovalHandler): void {
     this.approvalHandler = handler;
+  }
+
+  // ===========================================================================
+  // Agent Spawning Visibility
+  // ===========================================================================
+
+  /**
+   * Register a handler for agent spawned events.
+   * 
+   * Called when the AI delegates to a sub-agent. Provides agent ID, name,
+   * and parent ID for tracking the agent hierarchy.
+   * 
+   * @example
+   * ```typescript
+   * client.onAgentSpawned((info) => {
+   *   console.log(`🤖 Agent spawned: ${info.agentName} (${info.agentId})`);
+   *   if (info.parentId) {
+   *     console.log(`   Parent: ${info.parentId}`);
+   *   }
+   * });
+   * ```
+   * 
+   * @param handler - Callback function for agent spawned events
+   */
+  onAgentSpawned(handler: AgentSpawnedHandler): void {
+    this.agentSpawnedHandlers.add(handler);
+  }
+
+  /**
+   * Unregister an agent spawned handler.
+   * 
+   * @param handler - Handler to remove
+   */
+  offAgentSpawned(handler: AgentSpawnedHandler): void {
+    this.agentSpawnedHandlers.delete(handler);
+  }
+
+  /**
+   * Register a handler for agent completed events.
+   * 
+   * Called when a sub-agent finishes execution. Provides result or error.
+   * 
+   * @example
+   * ```typescript
+   * client.onAgentCompleted((info) => {
+   *   console.log(`✅ Agent completed: ${info.agentId}`);
+   *   if (info.error) {
+   *     console.error(`   Error: ${info.error}`);
+   *   } else if (info.result) {
+   *     console.log(`   Result: ${info.result}`);
+   *   }
+   * });
+   * ```
+   * 
+   * @param handler - Callback function for agent completed events
+   */
+  onAgentCompleted(handler: AgentCompletedHandler): void {
+    this.agentCompletedHandlers.add(handler);
+  }
+
+  /**
+   * Unregister an agent completed handler.
+   * 
+   * @param handler - Handler to remove
+   */
+  offAgentCompleted(handler: AgentCompletedHandler): void {
+    this.agentCompletedHandlers.delete(handler);
+  }
+
+  /**
+   * Get the current agent hierarchy.
+   * 
+   * Returns a map of agent IDs to AgentNode objects, representing the
+   * parent/child relationships between agents spawned during this session.
+   * 
+   * @example
+   * ```typescript
+   * const hierarchy = client.getAgentHierarchy();
+   * 
+   * // Find root agents (no parent)
+   * const rootAgents = Array.from(hierarchy.values())
+   *   .filter(node => node.parentId === null);
+   * 
+   * // Build tree visualization
+   * function printTree(agentId: string, indent = 0) {
+   *   const node = hierarchy.get(agentId);
+   *   if (!node) return;
+   *   
+   *   console.log('  '.repeat(indent) + `${node.agentName} (${node.agentId})`);
+   *   node.children.forEach(childId => printTree(childId, indent + 1));
+   * }
+   * rootAgents.forEach(node => printTree(node.agentId));
+   * ```
+   * 
+   * @returns Map of agent IDs to AgentNode objects
+   */
+  getAgentHierarchy(): Map<string, AgentNode> {
+    return new Map(this.agentHierarchy);
+  }
+
+  /**
+   * Clear the agent hierarchy.
+   * 
+   * Useful when starting a new prompt or resetting state.
+   */
+  clearAgentHierarchy(): void {
+    this.agentHierarchy.clear();
   }
 
   // ===========================================================================

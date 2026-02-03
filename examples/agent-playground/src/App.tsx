@@ -3,6 +3,7 @@ import {
   AmplifierClient,
   type Event,
   type BundleDefinition,
+  type AgentNode,
 } from "amplifier-sdk";
 
 // Available tools that can be selected
@@ -114,6 +115,11 @@ interface PendingApproval {
   args?: Record<string, unknown>;
 }
 
+interface AgentHierarchyState {
+  nodes: Map<string, AgentNode>;
+  lastUpdate: number;
+}
+
 // Initialize client with observability
 const client = new AmplifierClient({
   baseUrl: "",
@@ -124,6 +130,21 @@ const client = new AmplifierClient({
   onError: (err) => {
     console.error(`[Error] ${err.code}: ${err.message}`);
   },
+});
+
+// Register agent spawning visibility handlers
+client.onAgentSpawned((info) => {
+  console.log(`🤖 [Agent Spawned] ${info.agentName} (${info.agentId})`);
+  if (info.parentId) {
+    console.log(`   Parent: ${info.parentId}`);
+  }
+});
+
+client.onAgentCompleted((info) => {
+  console.log(`✅ [Agent Completed] ${info.agentId}`);
+  if (info.error) {
+    console.error(`   Error: ${info.error}`);
+  }
 });
 
 // Register demo client-side tools
@@ -233,6 +254,13 @@ function App() {
   const [showThinking, setShowThinking] = useState(true);
   const [showSubAgents, setShowSubAgents] = useState(true);
   const [showToolResults, setShowToolResults] = useState(true);
+  const [showAgentHierarchy, setShowAgentHierarchy] = useState(true);
+
+  // Agent hierarchy state
+  const [agentHierarchy, setAgentHierarchy] = useState<AgentHierarchyState>({
+    nodes: new Map(),
+    lastUpdate: 0,
+  });
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -387,6 +415,14 @@ function App() {
     try {
       for await (const event of client.prompt(sessionId, userMessage.content)) {
         handleEvent(event, assistantId);
+        
+        // Update hierarchy after each agent event
+        if (event.type === "agent.spawned" || event.type === "agent.completed") {
+          setAgentHierarchy({
+            nodes: client.getAgentHierarchy(),
+            lastUpdate: Date.now(),
+          });
+        }
       }
 
       setMessages((prev) =>
@@ -562,6 +598,47 @@ function App() {
     }
   };
 
+  // Render agent hierarchy tree
+  const renderAgentTree = () => {
+    const rootAgents = Array.from(agentHierarchy.nodes.values()).filter(
+      (node) => node.parentId === null
+    );
+
+    if (rootAgents.length === 0) {
+      return <div className="empty-hierarchy">No agents spawned yet</div>;
+    }
+
+    const renderNode = (node: AgentNode, depth: number = 0): JSX.Element => {
+      const children = node.children
+        .map((id) => agentHierarchy.nodes.get(id))
+        .filter((n): n is AgentNode => n !== undefined);
+
+      const status = node.completedAt ? "✅" : "⏳";
+      const hasError = node.error ? " ❌" : "";
+
+      return (
+        <div key={node.agentId} className="hierarchy-node" style={{ marginLeft: `${depth * 20}px` }}>
+          <div className={`hierarchy-node-content ${node.completedAt ? "completed" : "running"}`}>
+            <span className="hierarchy-status">{status}{hasError}</span>
+            <span className="hierarchy-name">{node.agentName}</span>
+            <span className="hierarchy-id">({node.agentId.slice(0, 8)}...)</span>
+          </div>
+          {children.length > 0 && (
+            <div className="hierarchy-children">
+              {children.map((child) => renderNode(child, depth + 1))}
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    return (
+      <div className="agent-hierarchy-tree">
+        {rootAgents.map((root) => renderNode(root, 0))}
+      </div>
+    );
+  };
+
   return (
     <div className="app">
       {/* Header */}
@@ -591,6 +668,14 @@ function App() {
               onChange={(e) => setShowToolResults(e.target.checked)}
             />
             Show Tool Results
+          </label>
+          <label className="toggle-label">
+            <input
+              type="checkbox"
+              checked={showAgentHierarchy}
+              onChange={(e) => setShowAgentHierarchy(e.target.checked)}
+            />
+            Show Agent Tree
           </label>
           <div className={`connection-status ${isConnected ? "connected" : "disconnected"}`}>
             <span className="status-dot" />
@@ -749,6 +834,26 @@ function App() {
               </div>
               <div className="session-badge">{sessionId.slice(0, 12)}...</div>
             </div>
+
+            {/* Agent Hierarchy Panel */}
+            {showAgentHierarchy && agentHierarchy.nodes.size > 0 && (
+              <div className="agent-hierarchy-panel">
+                <div className="hierarchy-header">
+                  <span>🌳 Agent Delegation Tree</span>
+                  <button 
+                    className="btn-icon" 
+                    onClick={() => {
+                      client.clearAgentHierarchy();
+                      setAgentHierarchy({ nodes: new Map(), lastUpdate: Date.now() });
+                    }}
+                    title="Clear hierarchy"
+                  >
+                    🗑️
+                  </button>
+                </div>
+                {renderAgentTree()}
+              </div>
+            )}
 
             {/* Approval Modal */}
             {pendingApproval && (

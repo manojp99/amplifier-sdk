@@ -23,6 +23,7 @@ Example:
 
 from .client import AmplifierClient
 from .types import (
+    AgentNode,
     ApprovalRequest,
     BundleDefinition,
     ClientTool,
@@ -38,6 +39,7 @@ from .types import (
 __version__ = "0.1.0"
 
 __all__ = [
+    "AgentNode",
     "AmplifierClient",
     "Event",
     "EventType",

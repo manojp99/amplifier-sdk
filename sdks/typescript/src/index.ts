@@ -62,6 +62,10 @@ export type {
   AgentConfig,
   // Client-side tools
   ClientTool,
+  // Agent spawning visibility
+  AgentNode,
+  AgentSpawnedHandler,
+  AgentCompletedHandler,
   // Observability types
   RequestInfo,
   ResponseInfo,

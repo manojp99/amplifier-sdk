@@ -541,3 +541,49 @@ export interface ClientConfig {
    */
   debug?: boolean;
 }
+
+// =============================================================================
+// Agent Spawning Visibility Types
+// =============================================================================
+
+/**
+ * Agent hierarchy node for tracking parent/child relationships.
+ */
+export interface AgentNode {
+  /** Unique agent ID */
+  agentId: string;
+  /** Agent name (bundle/agent type) */
+  agentName: string;
+  /** Parent agent ID (null for root) */
+  parentId: string | null;
+  /** Child agent IDs */
+  children: string[];
+  /** Agent spawn timestamp */
+  spawnedAt: string;
+  /** Agent completion timestamp (null if still running) */
+  completedAt: string | null;
+  /** Agent result (available after completion) */
+  result?: string;
+  /** Agent error (if failed) */
+  error?: string;
+}
+
+/**
+ * Agent spawned callback.
+ */
+export type AgentSpawnedHandler = (info: {
+  agentId: string;
+  agentName: string;
+  parentId: string | null;
+  timestamp: string;
+}) => void | Promise<void>;
+
+/**
+ * Agent completed callback.
+ */
+export type AgentCompletedHandler = (info: {
+  agentId: string;
+  result?: string;
+  error?: string;
+  timestamp: string;
+}) => void | Promise<void>;

@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 
 from .types import (
+    AgentNode,
     ClientTool,
     Event,
     PromptResponse,
@@ -61,6 +62,9 @@ class AmplifierClient:
         self._client_tools: dict[str, ClientTool] = {}
         self._event_handlers: dict[str, list[Any]] = {}
         self._approval_handler: Any = None
+        self._agent_spawned_handlers: set[Any] = set()
+        self._agent_completed_handlers: set[Any] = set()
+        self._agent_hierarchy: dict[str, AgentNode] = {}
 
     # =========================================================================
     # Client-Side Tools
@@ -159,10 +163,11 @@ class AmplifierClient:
         return self._client
 
     async def close(self) -> None:
-        """Close the HTTP client."""
+        """Close the HTTP client and clear agent hierarchy."""
         if self._client and not self._client.is_closed:
             await self._client.aclose()
             self._client = None
+        self._agent_hierarchy.clear()
 
     async def __aenter__(self) -> AmplifierClient:
         """Async context manager entry."""
@@ -217,6 +222,124 @@ class AmplifierClient:
             except Exception as err:
                 print(f"Event handler error for {event.type}: {err}")
 
+    async def _handle_agent_spawned(self, event: Event) -> None:
+        """Handle agent.spawned event and update hierarchy.
+
+        Args:
+            event: The agent.spawned event
+        """
+        data = event.data
+        agent_id = data.get("agent_id", "")
+        agent_name = data.get("agent_name", "")
+        parent_id = data.get("parent_id")
+        timestamp = event.timestamp or ""
+
+        # Validate required fields
+        if not agent_id:
+            print("Warning: agent.spawned event missing agent_id, skipping hierarchy update")
+            return
+
+        # Update or create agent node
+        existing_node = self._agent_hierarchy.get(agent_id)
+        node = AgentNode(
+            agent_id=agent_id,
+            agent_name=agent_name or (existing_node.agent_name if existing_node else "unknown"),
+            parent_id=parent_id,
+            children=existing_node.children if existing_node else [],
+            spawned_at=existing_node.spawned_at if existing_node else timestamp,
+            completed_at=existing_node.completed_at if existing_node else None,
+            result=existing_node.result if existing_node else None,
+            error=existing_node.error if existing_node else None,
+        )
+
+        self._agent_hierarchy[agent_id] = node
+
+        # Update parent's children list
+        if parent_id:
+            parent = self._agent_hierarchy.get(parent_id)
+            if parent and agent_id not in parent.children:
+                parent.children.append(agent_id)
+            elif not parent:
+                # Create placeholder parent if it doesn't exist yet
+                placeholder_parent = AgentNode(
+                    agent_id=parent_id,
+                    agent_name="unknown",
+                    parent_id=None,
+                    children=[agent_id],
+                    spawned_at=timestamp,
+                    completed_at=None,
+                )
+                self._agent_hierarchy[parent_id] = placeholder_parent
+
+        # Call registered handlers
+        info = {
+            "agent_id": agent_id,
+            "agent_name": node.agent_name,
+            "parent_id": parent_id,
+            "timestamp": timestamp,
+        }
+
+        for handler in list(self._agent_spawned_handlers):
+            try:
+                result = handler(info)
+                if hasattr(result, "__await__"):
+                    await result
+            except Exception as err:
+                print(f"Agent spawned handler error: {err}")
+
+    async def _handle_agent_completed(self, event: Event) -> None:
+        """Handle agent.completed event and update hierarchy.
+
+        Args:
+            event: The agent.completed event
+        """
+        data = event.data
+        agent_id = data.get("agent_id", "")
+        result = data.get("result")
+        error = data.get("error")
+        timestamp = event.timestamp or ""
+
+        # Validate required fields
+        if not agent_id:
+            print("Warning: agent.completed event missing agent_id, skipping hierarchy update")
+            return
+
+        # Update existing node or create if completion came before spawn
+        existing_node = self._agent_hierarchy.get(agent_id)
+        if existing_node:
+            existing_node.completed_at = timestamp
+            existing_node.result = result
+            existing_node.error = error
+        else:
+            # Completion before spawn - create node with completion data
+            node = AgentNode(
+                agent_id=agent_id,
+                agent_name="unknown",
+                parent_id=None,
+                children=[],
+                spawned_at=timestamp,
+                completed_at=timestamp,
+                result=result,
+                error=error,
+            )
+            self._agent_hierarchy[agent_id] = node
+
+        # Call registered handlers
+        info = {
+            "agent_id": agent_id,
+            "result": result,
+            "error": error,
+            "timestamp": timestamp,
+        }
+
+        for handler in list(self._agent_completed_handlers):
+            try:
+                result_val = handler(info)
+                if hasattr(result_val, "__await__"):
+                    await result_val
+            except Exception as err:
+                print(f"Agent completed handler error: {err}")
+
     def on_approval(self, handler: Any) -> None:
         """Register approval handler (convenience method).
 
@@ -233,6 +356,111 @@ class AmplifierClient:
             ```
         """
         self._approval_handler = handler
+
+    # =========================================================================
+    # Agent Spawning Visibility
+    # =========================================================================
+
+    def on_agent_spawned(self, handler: Any) -> None:
+        """Register a handler for agent spawned events.
+
+        Called when the AI delegates to a sub-agent. Provides agent ID, name,
+        and parent ID for tracking the agent hierarchy.
+
+        Args:
+            handler: Callback function for agent spawned events
+
+        Example:
+            ```python
+            def handle_spawn(info):
+                print(f"🤖 Agent spawned: {info['agent_name']} ({info['agent_id']})")
+                if info['parent_id']:
+                    print(f"   Parent: {info['parent_id']}")
+
+            client.on_agent_spawned(handle_spawn)
+            ```
+        """
+        self._agent_spawned_handlers.add(handler)
+
+    def off_agent_spawned(self, handler: Any) -> None:
+        """Unregister an agent spawned handler.
+
+        Args:
+            handler: Handler to remove
+        """
+        self._agent_spawned_handlers.discard(handler)
+
+    def on_agent_completed(self, handler: Any) -> None:
+        """Register a handler for agent completed events.
+
+        Called when a sub-agent finishes execution. Provides result or error.
+
+        Args:
+            handler: Callback function for agent completed events
+
+        Example:
+            ```python
+            def handle_completion(info):
+                print(f"✅ Agent completed: {info['agent_id']}")
+                if info.get('error'):
+                    print(f"   Error: {info['error']}")
+                elif info.get('result'):
+                    print(f"   Result: {info['result']}")
+
+            client.on_agent_completed(handle_completion)
+            ```
+        """
+        self._agent_completed_handlers.add(handler)
+
+    def off_agent_completed(self, handler: Any) -> None:
+        """Unregister an agent completed handler.
+
+        Args:
+            handler: Handler to remove
+        """
+        self._agent_completed_handlers.discard(handler)
+
+    def get_agent_hierarchy(self) -> dict[str, AgentNode]:
+        """Get the current agent hierarchy.
+
+        Returns a dictionary of agent IDs to AgentNode objects, representing
+        the parent/child relationships between agents spawned during this session.
+
+        Returns:
+            Dictionary of agent IDs to AgentNode objects
+
+        Example:
+            ```python
+            hierarchy = client.get_agent_hierarchy()
+
+            # Find root agents (no parent)
+            root_agents = [
+                node for node in hierarchy.values()
+                if node.parent_id is None
+            ]
+
+            # Build tree visualization
+            def print_tree(agent_id: str, indent: int = 0):
+                node = hierarchy.get(agent_id)
+                if not node:
+                    return
+
+                print('  ' * indent + f"{node.agent_name} ({node.agent_id})")
+                for child_id in node.children:
+                    print_tree(child_id, indent + 1)
+
+            for node in root_agents:
+                print_tree(node.agent_id)
+            ```
+        """
+        return self._agent_hierarchy.copy()
+
+    def clear_agent_hierarchy(self) -> None:
+        """Clear the agent hierarchy.
+
+        Useful when starting a new prompt or resetting state.
+        """
+        self._agent_hierarchy.clear()
 
     # =========================================================================
     # Health & Capabilities
@@ -536,6 +764,12 @@ class AmplifierClient:
                                 except Exception as err:
                                     print(f"Approval handler error: {err}")
 
+                            # Handle agent spawning visibility
+                            if event.type == "agent.spawned":
+                                await self._handle_agent_spawned(event)
+                            elif event.type == "agent.completed":
+                                await self._handle_agent_completed(event)
+
                             # Emit to registered event handlers
                             await self._emit_event(event)
 
@@ -581,19 +815,6 @@ class AmplifierClient:
         )
         response.raise_for_status()
         return PromptResponse.from_dict(response.json())
-
-    async def cancel(self, session_id: str) -> bool:
-        """Cancel ongoing execution.
-
-        Args:
-            session_id: Session ID
-
-        Returns:
-            True if cancelled successfully
-        """
-        client = await self._get_client()
-        response = await client.post(f"/v1/session/{session_id}/cancel")
-        return response.status_code == 200
 
     # =========================================================================
     # Approval System
