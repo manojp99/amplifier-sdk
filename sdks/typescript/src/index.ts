@@ -60,6 +60,11 @@ export type {
   BundleDefinition,
   ModuleConfig,
   AgentConfig,
+  // MCP server types
+  McpServerConfig,
+  McpServerStdio,
+  McpServerHttp,
+  McpServerSse,
   // Client-side tools
   ClientTool,
   // Agent spawning visibility

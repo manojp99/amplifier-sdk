@@ -360,6 +360,51 @@ export interface BehaviorDefinition {
 }
 
 /**
+ * MCP (Model Context Protocol) server configuration.
+ * 
+ * MCP servers provide external tools and resources to the agent.
+ */
+export type McpServerConfig = McpServerStdio | McpServerHttp | McpServerSse;
+
+/**
+ * MCP server via stdio (spawns a process).
+ */
+export interface McpServerStdio {
+  /** Server type */
+  type: "stdio";
+  /** Command to execute */
+  command: string;
+  /** Command arguments */
+  args?: string[];
+  /** Environment variables */
+  env?: Record<string, string>;
+}
+
+/**
+ * MCP server via HTTP.
+ */
+export interface McpServerHttp {
+  /** Server type */
+  type: "http";
+  /** Server URL */
+  url: string;
+  /** Authentication headers */
+  headers?: Record<string, string>;
+}
+
+/**
+ * MCP server via SSE (Server-Sent Events).
+ */
+export interface McpServerSse {
+  /** Server type */
+  type: "sse";
+  /** Server URL */
+  url: string;
+  /** Authentication headers */
+  headers?: Record<string, string>;
+}
+
+/**
  * Bundle definition for runtime bundle creation.
  * 
  * This allows you to define a complete bundle configuration
@@ -385,6 +430,9 @@ export interface BundleDefinition {
   orchestrator?: ModuleConfig;
   /** Context module */
   context?: ModuleConfig;
+  
+  /** MCP servers to connect */
+  mcpServers?: McpServerConfig[];
   
   /** Agent definitions */
   agents?: AgentConfig[];
@@ -440,6 +488,8 @@ export interface SessionConfig {
   workingDirectory?: string;
   /** Additional behaviors to compose */
   behaviors?: string[];
+  /** MCP servers to connect */
+  mcpServers?: McpServerConfig[];
 }
 
 /**

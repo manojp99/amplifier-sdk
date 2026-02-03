@@ -42,6 +42,10 @@ from .types import (
     ClientTool,
     Event,
     EventType,
+    McpServerConfig,
+    McpServerHttp,
+    McpServerSse,
+    McpServerStdio,
     ModuleConfig,
     PromptResponse,
     SessionConfig,
@@ -65,6 +69,11 @@ __all__ = [
     "BundleDefinition",
     "ModuleConfig",
     "SessionConfig",
+    # MCP server types
+    "McpServerConfig",
+    "McpServerStdio",
+    "McpServerHttp",
+    "McpServerSse",
     # Recipe types
     "RecipeBuilder",
     "StepBuilder",

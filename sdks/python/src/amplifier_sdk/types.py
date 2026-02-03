@@ -252,6 +252,61 @@ class BehaviorDefinition:
 
 
 @dataclass
+class McpServerStdio:
+    """MCP server via stdio (spawns a process)."""
+
+    type: str = "stdio"
+    command: str = ""
+    args: list[str] = field(default_factory=list)
+    env: dict[str, str] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        result: dict[str, Any] = {"type": self.type, "command": self.command}
+        if self.args:
+            result["args"] = self.args
+        if self.env:
+            result["env"] = self.env
+        return result
+
+
+@dataclass
+class McpServerHttp:
+    """MCP server via HTTP."""
+
+    type: str = "http"
+    url: str = ""
+    headers: dict[str, str] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        result: dict[str, Any] = {"type": self.type, "url": self.url}
+        if self.headers:
+            result["headers"] = self.headers
+        return result
+
+
+@dataclass
+class McpServerSse:
+    """MCP server via SSE (Server-Sent Events)."""
+
+    type: str = "sse"
+    url: str = ""
+    headers: dict[str, str] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        result: dict[str, Any] = {"type": self.type, "url": self.url}
+        if self.headers:
+            result["headers"] = self.headers
+        return result
+
+
+# Union type for MCP server configs
+McpServerConfig = McpServerStdio | McpServerHttp | McpServerSse
+
+
+@dataclass
 class BundleDefinition:
     """Runtime bundle definition.
 
@@ -281,6 +336,7 @@ class BundleDefinition:
     hooks: list[ModuleConfig] = field(default_factory=list)
     orchestrator: ModuleConfig | None = None
     context: ModuleConfig | None = None
+    mcp_servers: list[McpServerConfig] = field(default_factory=list)
     agents: list[AgentConfig] = field(default_factory=list)
     instructions: str | None = None
     session: dict[str, Any] = field(default_factory=dict)
@@ -304,6 +360,8 @@ class BundleDefinition:
             result["orchestrator"] = self.orchestrator.to_dict()
         if self.context:
             result["context"] = self.context.to_dict()
+        if self.mcp_servers:
+            result["mcpServers"] = [s.to_dict() for s in self.mcp_servers]
         if self.agents:
             result["agents"] = [a.to_dict() for a in self.agents]
         if self.instructions:
@@ -341,6 +399,7 @@ class SessionConfig:
     model: str | None = None
     working_directory: str | None = None
     behaviors: list[str] = field(default_factory=list)
+    mcp_servers: list[McpServerConfig] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary, excluding None values."""
@@ -359,6 +418,8 @@ class SessionConfig:
             result["working_directory"] = self.working_directory
         if self.behaviors:
             result["behaviors"] = self.behaviors
+        if self.mcp_servers:
+            result["mcpServers"] = [s.to_dict() for s in self.mcp_servers]
         return result
 
 

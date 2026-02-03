@@ -863,15 +863,19 @@ interface BundleDefinition {
   providers?: ModuleConfig[];
   tools?: ModuleConfig[];          // Server-side tools
   clientTools?: string[];          // Client-side tools (SDK-handled)
-  hooks?: ModuleConfig[];
+  hooks?: ModuleConfig[];          // Hook modules for lifecycle observation
   orchestrator?: ModuleConfig;
   context?: ModuleConfig;
+  
+  // MCP Integration
+  mcpServers?: McpServerConfig[];  // Model Context Protocol servers
   
   // Configuration
   agents?: AgentConfig[];
   instructions?: string;
   session?: Record<string, unknown>;
   includes?: string[];
+  behaviors?: string[];
 }
 ```
 
@@ -885,7 +889,36 @@ class BundleDefinition:
     providers: list[ModuleConfig] = field(default_factory=list)
     tools: list[ModuleConfig] = field(default_factory=list)
     client_tools: list[str] = field(default_factory=list)
+    hooks: list[ModuleConfig] = field(default_factory=list)
+    mcp_servers: list[McpServerConfig] = field(default_factory=list)
     # ... (same fields as TypeScript)
+```
+
+**Example with hooks and MCP:**
+```typescript
+const bundle: BundleDefinition = {
+  name: "enterprise-agent",
+  version: "1.0.0",
+  providers: [{ module: "provider-anthropic" }],
+  tools: [{ module: "tool-filesystem" }],
+  hooks: [
+    { module: "hook-logging" },
+    { module: "hook-approval", config: { auto_approve: false } }
+  ],
+  mcpServers: [
+    {
+      type: "stdio",
+      command: "/opt/mcp/database-mcp",
+      args: ["--db", "postgresql://localhost/mydb"]
+    },
+    {
+      type: "http",
+      url: "https://api.company.com/mcp",
+      headers: { "Authorization": "Bearer token" }
+    }
+  ],
+  instructions: "You are an enterprise assistant."
+};
 ```
 
 ---
@@ -1272,6 +1305,691 @@ import { version } from "amplifier-sdk/package.json";
 ```python
 from amplifier_sdk import __version__
 print(__version__)  # "0.1.0"
+```
+
+---
+
+## Recipe Management
+
+Multi-step workflow orchestration APIs.
+
+### recipe()
+
+Create a fluent recipe builder.
+
+**TypeScript:**
+```typescript
+recipe(name: string): RecipeBuilder
+```
+
+**Python:**
+```python
+recipe(name: str) -> RecipeBuilder
+```
+
+**Example:**
+```typescript
+const recipe = client.recipe("code-review")
+  .description("Automated code review workflow")
+  .version("1.0.0")
+  .context({ severity: "high" })
+  .step("analyze", (s) => 
+    s.agent("foundation:zen-architect")
+     .prompt("Analyze {{file_path}} for issues")
+     .timeout(300)
+  )
+  .step("fix", (s) => 
+    s.agent("foundation:modular-builder")
+     .prompt("Apply fixes")
+     .requiresApproval("Apply these fixes?")
+  )
+  .build();
+```
+
+**RecipeBuilder API:**
+- `.description(text)` - Set recipe description (required)
+- `.version(version)` - Set semantic version (default: "1.0.0")
+- `.author(author)` - Set recipe author
+- `.tags(...tags)` - Add categorization tags
+- `.context(vars)` - Set initial context variables
+- `.recursion(config)` - Configure recursion protection
+- `.rateLimiting(config)` - Configure rate limiting
+- `.step(id, configure)` - Add a step to the recipe
+- `.build()` - Build the final RecipeDefinition
+
+**StepBuilder API:**
+- `.agent(name)` - Set agent to execute step
+- `.mode(mode)` - Set agent mode (e.g., "ANALYZE", "ARCHITECT")
+- `.prompt(text)` - Set prompt template (supports {{variable}} interpolation)
+- `.bash(command)` - Execute bash command instead of agent
+- `.output(varName)` - Store step output in variable
+- `.timeout(seconds)` - Set step timeout
+- `.onError(strategy, maxRetries?)` - Configure error handling ("fail" | "continue" | "retry")
+- `.requiresApproval(prompt?)` - Require human approval before executing
+- `.when(variable, operator, value)` - Add execution condition
+
+---
+
+### saveRecipe()
+
+Save a recipe definition (stores locally in SDK).
+
+**TypeScript:**
+```typescript
+saveRecipe(recipe: RecipeDefinition): void
+```
+
+**Python:**
+```python
+save_recipe(recipe: RecipeDefinition) -> None
+```
+
+**Example:**
+```typescript
+client.saveRecipe(recipe);
+```
+
+---
+
+### getRecipe()
+
+Get a saved recipe by name.
+
+**TypeScript:**
+```typescript
+getRecipe(name: string): RecipeDefinition | undefined
+```
+
+**Python:**
+```python
+get_recipe(name: str) -> RecipeDefinition | None
+```
+
+**Example:**
+```typescript
+const recipe = client.getRecipe("code-review");
+```
+
+---
+
+### getRecipes()
+
+List all saved recipes.
+
+**TypeScript:**
+```typescript
+getRecipes(): RecipeDefinition[]
+```
+
+**Python:**
+```python
+get_recipes() -> list[RecipeDefinition]
+```
+
+**Example:**
+```typescript
+const recipes = client.getRecipes();
+for (const recipe of recipes) {
+  console.log(`${recipe.name} v${recipe.version}`);
+}
+```
+
+---
+
+### deleteRecipe()
+
+Delete a saved recipe.
+
+**TypeScript:**
+```typescript
+deleteRecipe(name: string): boolean
+```
+
+**Python:**
+```python
+delete_recipe(name: str) -> bool
+```
+
+**Returns:** `true`/`True` if deleted, `false`/`False` if not found
+
+**Example:**
+```typescript
+const deleted = client.deleteRecipe("code-review");
+```
+
+---
+
+### executeRecipe()
+
+Execute a recipe by name or path.
+
+**TypeScript:**
+```typescript
+executeRecipe(
+  recipePathOrName: string,
+  context?: Record<string, any>,
+  sessionId?: string
+): Promise<RecipeExecution>
+```
+
+**Python:**
+```python
+async def execute_recipe(
+  recipe_path_or_name: str,
+  context: dict[str, Any] | None = None,
+  session_id: str | None = None
+) -> RecipeExecution
+```
+
+**Parameters:**
+- `recipePathOrName` / `recipe_path_or_name` - Recipe name (from saved recipes) or path (YAML file like `@recipes:code-review.yaml`)
+- `context` - Context variables for the recipe
+- `sessionId` / `session_id` - Optional session ID to use (creates new session if not provided)
+
+**Returns:** RecipeExecution monitor for tracking progress
+
+**Example:**
+```typescript
+// Execute saved recipe
+const execution = await client.executeRecipe("code-review", {
+  file_path: "src/auth.ts",
+  severity: "high"
+});
+
+// Execute recipe from file
+const execution = await client.executeRecipe("@recipes:code-review.yaml", {
+  file_path: "src/auth.ts"
+});
+
+// Monitor progress
+execution.on("step.started", (step) => {
+  console.log(`Starting: ${step.step_id}`);
+});
+
+execution.on("step.completed", (step) => {
+  console.log(`Completed: ${step.step_id}`);
+  console.log(`Output:`, step.output);
+});
+
+execution.on("step.failed", (step) => {
+  console.error(`Failed: ${step.step_id}`, step.error);
+});
+
+// Handle approvals
+execution.onApproval(async (gate) => {
+  const shouldContinue = await askUser(gate.prompt);
+  return shouldContinue;
+});
+```
+
+---
+
+### resumeRecipe()
+
+Resume an interrupted recipe.
+
+**TypeScript:**
+```typescript
+resumeRecipe(sessionId: string): Promise<RecipeExecution>
+```
+
+**Python:**
+```python
+async def resume_recipe(session_id: str) -> RecipeExecution
+```
+
+**Example:**
+```typescript
+const execution = await client.resumeRecipe("recipe_session_123");
+execution.on("step.completed", (step) => {
+  console.log(`Resumed: ${step.step_id}`);
+});
+```
+
+---
+
+### approveRecipeStage()
+
+Approve a recipe stage/step.
+
+**TypeScript:**
+```typescript
+approveRecipeStage(sessionId: string, stageName: string): Promise<void>
+```
+
+**Python:**
+```python
+async def approve_recipe_stage(session_id: str, stage_name: str) -> None
+```
+
+**Example:**
+```typescript
+await client.approveRecipeStage(sessionId, "deploy-to-production");
+```
+
+---
+
+### denyRecipeStage()
+
+Deny a recipe stage/step.
+
+**TypeScript:**
+```typescript
+denyRecipeStage(sessionId: string, stageName: string, reason?: string): Promise<void>
+```
+
+**Python:**
+```python
+async def deny_recipe_stage(
+  session_id: str,
+  stage_name: str,
+  reason: str | None = None
+) -> None
+```
+
+**Example:**
+```typescript
+await client.denyRecipeStage(sessionId, "deploy", "Tests are failing");
+```
+
+---
+
+### cancelRecipe()
+
+Cancel a running recipe.
+
+**TypeScript:**
+```typescript
+cancelRecipe(sessionId: string): Promise<void>
+```
+
+**Python:**
+```python
+async def cancel_recipe(session_id: str) -> None
+```
+
+**Example:**
+```typescript
+await client.cancelRecipe(sessionId);
+```
+
+---
+
+### listRecipeSessions()
+
+List active recipe sessions.
+
+**TypeScript:**
+```typescript
+listRecipeSessions(): Promise<RecipeSession[]>
+```
+
+**Python:**
+```python
+async def list_recipe_sessions() -> list[RecipeSession]
+```
+
+**Example:**
+```typescript
+const sessions = await client.listRecipeSessions();
+for (const session of sessions) {
+  console.log(`${session.recipe_name}: ${session.status}`);
+}
+```
+
+---
+
+## Recipe Types
+
+### RecipeDefinition
+
+Complete recipe specification.
+
+```typescript
+interface RecipeDefinition {
+  name: string;
+  description: string;
+  version: string;
+  author?: string;
+  tags?: string[];
+  context?: Record<string, any>;
+  recursion?: RecursionConfig;
+  rate_limiting?: RateLimitingConfig;
+  steps: RecipeStep[];
+}
+```
+
+---
+
+### RecipeStep
+
+Individual step in a recipe.
+
+```typescript
+interface RecipeStep {
+  id: string;
+  agent?: string;
+  mode?: string;
+  prompt?: string;
+  type?: "agent" | "bash";
+  command?: string;
+  output?: string;
+  timeout?: number;
+  on_error?: "fail" | "continue" | "retry";
+  max_retries?: number;
+  requires_approval?: boolean;
+  approval_prompt?: string;
+  conditions?: Array<{
+    variable: string;
+    operator: "equals" | "not_equals" | "contains" | "matches";
+    value: any;
+  }>;
+}
+```
+
+---
+
+### RecipeExecution
+
+Recipe execution monitor with event-based progress tracking.
+
+**Methods:**
+- `on(event, handler)` - Register event handler for "step.started", "step.completed", "step.failed", "step.skipped"
+- `off(event, handler)` - Remove event handler
+- `onApproval(handler)` - Register approval gate handler
+- `getCurrentStep()` - Get current step ID
+- `getCompletedSteps()` - Get completed steps
+- `getSteps()` - Get all step events
+
+**Properties:**
+- `id` - Session ID for this execution
+- `recipe` - Recipe name being executed
+
+---
+
+### RecipeSession
+
+Information about an active recipe execution.
+
+```typescript
+interface RecipeSession {
+  session_id: string;
+  recipe_name: string;
+  started: string;
+  current_step_index: number;
+  completed_steps: string[];
+  status?: "running" | "completed" | "failed" | "awaiting_approval";
+  error?: string;
+}
+```
+
+---
+
+## MCP Server Types
+
+Model Context Protocol (MCP) servers provide external tools and resources to agents.
+
+### McpServerStdio
+
+Spawns an MCP server as a child process via stdio.
+
+**TypeScript:**
+```typescript
+interface McpServerStdio {
+  type: "stdio";
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+}
+```
+
+**Python:**
+```python
+@dataclass
+class McpServerStdio:
+    type: str = "stdio"
+    command: str = ""
+    args: list[str] = field(default_factory=list)
+    env: dict[str, str] = field(default_factory=dict)
+```
+
+**Example:**
+```typescript
+{
+  type: "stdio",
+  command: "/usr/local/bin/mcp-database",
+  args: ["--db", "postgresql://localhost/mydb"],
+  env: { "DB_PASSWORD": "secret" }
+}
+```
+
+---
+
+### McpServerHttp
+
+Connects to an MCP server via HTTP.
+
+**TypeScript:**
+```typescript
+interface McpServerHttp {
+  type: "http";
+  url: string;
+  headers?: Record<string, string>;
+}
+```
+
+**Python:**
+```python
+@dataclass
+class McpServerHttp:
+    type: str = "http"
+    url: str = ""
+    headers: dict[str, str] = field(default_factory=dict)
+```
+
+**Example:**
+```typescript
+{
+  type: "http",
+  url: "https://api.example.com/mcp",
+  headers: {
+    "Authorization": "Bearer token123",
+    "X-API-Key": "key456"
+  }
+}
+```
+
+---
+
+### McpServerSse
+
+Connects to an MCP server via Server-Sent Events (SSE).
+
+**TypeScript:**
+```typescript
+interface McpServerSse {
+  type: "sse";
+  url: string;
+  headers?: Record<string, string>;
+}
+```
+
+**Python:**
+```python
+@dataclass
+class McpServerSse:
+    type: str = "sse"
+    url: str = ""
+    headers: dict[str, str] = field(default_factory=dict)
+```
+
+**Example:**
+```typescript
+{
+  type: "sse",
+  url: "http://localhost:8080/mcp/events",
+  headers: { "Authorization": "Bearer token789" }
+}
+```
+
+---
+
+## Hook Configuration
+
+Hooks are lifecycle observers that run on Amplifier events (e.g., tool calls, content generation).
+
+### Configuring Hooks in Bundles
+
+Hooks are configured via `ModuleConfig` in the `hooks` array:
+
+**Example:**
+```typescript
+const bundle: BundleDefinition = {
+  name: "my-bundle",
+  version: "1.0.0",
+  hooks: [
+    // Simple hook
+    { module: "hook-logging" },
+    
+    // Hook with configuration
+    { 
+      module: "hook-redaction",
+      config: { patterns: ["api-key", "secret"] }
+    },
+    
+    // Hook from custom source
+    {
+      module: "hook-custom",
+      source: "git+https://github.com/org/amplifier-hook-custom.git"
+    }
+  ]
+};
+```
+
+**Common Hook Modules:**
+- `hook-logging` - Event logging
+- `hook-approval` - Human approval gates
+- `hook-redaction` - Sensitive data redaction
+- `hook-shell` - Shell command approval
+
+---
+
+## MCP Integration
+
+MCP servers are configured in `BundleDefinition` or `SessionConfig`.
+
+### In Bundle Definition
+
+```typescript
+const bundle: BundleDefinition = {
+  name: "database-agent",
+  version: "1.0.0",
+  mcpServers: [
+    {
+      type: "stdio",
+      command: "/opt/mcp/database-mcp",
+      args: ["--db", "postgresql://localhost/mydb"],
+      env: { "DB_PASSWORD": process.env.DB_PASSWORD }
+    }
+  ]
+};
+```
+
+### In Session Config
+
+```typescript
+const session = await client.createSession({
+  bundle: "foundation",
+  mcpServers: [
+    {
+      type: "http",
+      url: "https://api.company.com/mcp",
+      headers: { "Authorization": `Bearer ${token}` }
+    }
+  ]
+});
+```
+
+### Multiple MCP Servers
+
+```typescript
+const bundle: BundleDefinition = {
+  name: "multi-mcp-agent",
+  version: "1.0.0",
+  mcpServers: [
+    // Local database access
+    {
+      type: "stdio",
+      command: "/opt/mcp/database-mcp",
+      args: ["--db", "postgresql://localhost/app"]
+    },
+    
+    // Remote API access
+    {
+      type: "http",
+      url: "https://api.example.com/mcp",
+      headers: { "X-API-Key": apiKey }
+    },
+    
+    // Streaming events
+    {
+      type: "sse",
+      url: "https://events.example.com/mcp/stream"
+    }
+  ]
+};
+```
+
+---
+
+## Complete Enterprise Example
+
+```typescript
+const enterpriseBundle: BundleDefinition = {
+  name: "enterprise-agent",
+  version: "1.0.0",
+  description: "Enterprise agent with full integration",
+  
+  // Providers and tools
+  providers: [{ module: "provider-anthropic" }],
+  tools: [
+    { module: "tool-filesystem" },
+    { module: "tool-bash" }
+  ],
+  
+  // Lifecycle hooks
+  hooks: [
+    { module: "hook-logging" },
+    { 
+      module: "hook-approval",
+      config: { auto_approve: false, timeout: 300 }
+    },
+    {
+      module: "hook-redaction",
+      config: { patterns: ["password", "api-key"] }
+    }
+  ],
+  
+  // MCP servers for external capabilities
+  mcpServers: [
+    {
+      type: "stdio",
+      command: "/opt/mcp/database-mcp",
+      args: ["--db", process.env.DATABASE_URL],
+      env: { "DB_PASSWORD": process.env.DB_PASSWORD }
+    },
+    {
+      type: "http",
+      url: "https://api.company.com/mcp",
+      headers: { "Authorization": `Bearer ${apiToken}` }
+    }
+  ],
+  
+  instructions: "You are an enterprise AI assistant with access to databases and company APIs."
+};
+
+// Create session with the bundle
+const session = await client.createSession({ bundle: enterpriseBundle });
 ```
 
 ---
