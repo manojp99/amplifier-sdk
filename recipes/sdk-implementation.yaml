@@ -95,7 +95,7 @@ steps:
       Return the test results.
     output: "typescript_test_results"
     timeout: 300
-    on_error: "continue"  # Continue even if tests fail - we'll handle with bug-hunter
+    on_error: "fail"  # STOP if tests fail - human must review and fix
 
   - id: "run-python-tests"
     agent: "bash"
@@ -109,72 +109,7 @@ steps:
       Return the test results.
     output: "python_test_results"
     timeout: 300
-    on_error: "continue"  # Continue even if tests fail - we'll handle with bug-hunter
-
-  - id: "analyze-test-results"
-    agent: "foundation:zen-architect"
-    mode: "ANALYZE"
-    prompt: |
-      Analyze the test results from both SDKs:
-      
-      TypeScript test results: {{typescript_test_results}}
-      Python test results: {{python_test_results}}
-      
-      Determine:
-      1. Did all tests pass?
-      2. Are there any test failures or errors?
-      3. What specific issues need to be fixed?
-      
-      Return your analysis as a JSON object with this exact structure:
-      {
-        "tests_passed": true or false,
-        "issues": ["list of specific issues found"],
-        "recommended_fixes": ["what needs to be corrected"]
-      }
-      
-      IMPORTANT: Return ONLY the JSON object, no additional text or markdown formatting.
-    output: "test_analysis"
-    parse_json: true
-    timeout: 300
-
-  - id: "fix-sdk-issues"
-    agent: "foundation:bug-hunter"
-    condition: "{{test_analysis.tests_passed}} == 'false'"
-    prompt: |
-      Fix the issues found in the SDK implementation based on test failures:
-      
-      Test analysis: {{test_analysis}}
-      
-      TypeScript implementation: {{typescript_implementation}}
-      Python implementation: {{python_implementation}}
-      
-      Test results:
-      - TypeScript: {{typescript_test_results}}
-      - Python: {{python_test_results}}
-      
-      Working directory: {{workspace_dir}}
-      
-      Debug and fix the issues to make all tests pass.
-    output: "bug_fixes"
-    timeout: 600
-    retry:
-      max_attempts: 2
-      backoff: "exponential"
-
-  - id: "rerun-tests-after-fix"
-    agent: "bash"
-    condition: "{{test_analysis.tests_passed}} == 'false'"
-    prompt: |
-      Re-run tests after applying fixes.
-      
-      Commands:
-      1. cd {{workspace_dir}}/typescript && npm test -- --testPathPattern={{feature_name}}
-      2. cd {{workspace_dir}}/python && pytest -v tests/test_{{feature_name}}.py
-      
-      Return combined test results.
-    output: "final_test_results"
-    timeout: 300
-    on_error: "fail"  # Fail if tests still don't pass after fixes
+    on_error: "fail"  # STOP if tests fail - human must review and fix
 
 # Usage:
 #   amplifier run "execute sdk-implementation.yaml with feature_name='retry' feature_spec='...' workspace_dir='/path/to/sdk'"
@@ -182,5 +117,6 @@ steps:
 # This sub-recipe:
 # - Implements feature in both TypeScript and Python SDKs
 # - Creates comprehensive unit tests
-# - Runs tests and fixes issues if found (up to 2 retry attempts)
+# - Runs tests and STOPS immediately if any test fails
+# - No automatic retries - human must review and fix failures
 # - Ensures feature parity between SDKs
