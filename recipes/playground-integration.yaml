@@ -68,14 +68,18 @@ steps:
       3. Is the feature properly integrated and working in the playground?
       4. What specific issues need to be addressed?
       
-      Provide a structured analysis with:
-      - integration_passed: true/false
-      - issues: list of specific issues found (empty if none)
-      - severity: "none", "minor", "major"
-      - recommended_actions: what needs to be done
+      **IMPORTANT: Return ONLY a valid JSON object with this exact structure:**
+      {
+        "integration_passed": true or false,
+        "issues": ["issue1", "issue2", ...],
+        "severity": "none" or "minor" or "major",
+        "recommended_actions": ["action1", "action2", ...]
+      }
       
-      Set integration_passed to "true" only if everything works correctly.
+      Set integration_passed to true only if everything works correctly.
+      Do not include any prose - return only the JSON object.
     output: "integration_analysis"
+    parse_json: true
     timeout: 300
 
   - id: "fix-integration-issues"
