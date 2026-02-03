@@ -73,6 +73,19 @@ type ApprovalHandler = (request: {
   arguments?: Record<string, unknown>;
 }) => Promise<boolean> | boolean;
 
+/**
+ * Thinking state.
+ */
+type ThinkingState = {
+  isThinking: boolean;
+  content: string;
+};
+
+/**
+ * Thinking handler function type.
+ */
+type ThinkingHandler = (thinking: ThinkingState) => void | Promise<void>;
+
 export class AmplifierClient {
   private readonly config: ClientConfig;
   private readonly baseUrl: string;
@@ -84,6 +97,9 @@ export class AmplifierClient {
   private readonly agentSpawnedHandlers: Set<AgentSpawnedHandler> = new Set();
   private readonly agentCompletedHandlers: Set<AgentCompletedHandler> = new Set();
   private readonly agentHierarchy: Map<string, AgentNode> = new Map();
+  private readonly thinkingHandlers: Set<ThinkingHandler> = new Set();
+  private isThinking: boolean = false;
+  private currentThinkingContent: string = "";
 
   constructor(config: ClientConfig = {}) {
     this.config = config;
@@ -653,6 +669,8 @@ export class AmplifierClient {
       await this.handleAgentSpawned(event as Event);
     } else if (event.type === "agent.completed") {
       await this.handleAgentCompleted(event as Event);
+    } else if (event.type === "thinking.delta") {
+      await this.handleThinking(event as Event);
     }
     
     // Then call generic event handlers
@@ -964,6 +982,88 @@ export class AmplifierClient {
    */
   clearAgentHierarchy(): void {
     this.agentHierarchy.clear();
+  }
+
+  // ===========================================================================
+  // Thinking Stream Helpers
+  // ===========================================================================
+
+  /**
+   * Handle thinking.delta event and update state.
+   */
+  private async handleThinking(event: Event): Promise<void> {
+    if (event.type !== "thinking.delta") return;
+
+    const delta = event.data.delta as string;
+    
+    // Update thinking state
+    if (!this.isThinking) {
+      this.isThinking = true;
+      this.currentThinkingContent = "";
+    }
+    
+    this.currentThinkingContent += delta;
+
+    // Call registered handlers
+    const thinkingState: ThinkingState = {
+      isThinking: this.isThinking,
+      content: this.currentThinkingContent
+    };
+
+    for (const handler of Array.from(this.thinkingHandlers)) {
+      try {
+        await handler(thinkingState);
+      } catch (err) {
+        console.error("Thinking handler error:", err);
+      }
+    }
+  }
+
+  /**
+   * Register thinking event handler (convenience method).
+   * 
+   * Subscribe to AI reasoning/thinking events with automatic state tracking.
+   * 
+   * @example
+   * ```typescript
+   * client.onThinking((thinking) => {
+   *   if (thinking.isThinking) {
+   *     showThinkingPanel(thinking.content);
+   *   } else {
+   *     hideThinkingPanel();
+   *   }
+   * });
+   * ```
+   */
+  onThinking(handler: ThinkingHandler): void {
+    this.thinkingHandlers.add(handler);
+  }
+
+  /**
+   * Unregister thinking handler.
+   */
+  offThinking(handler: ThinkingHandler): void {
+    this.thinkingHandlers.delete(handler);
+  }
+
+  /**
+   * Get current thinking state.
+   */
+  getThinkingState(): ThinkingState {
+    return {
+      isThinking: this.isThinking,
+      content: this.currentThinkingContent
+    };
+  }
+
+  /**
+   * Clear thinking state.
+   * 
+   * Useful when starting a new prompt or when thinking completes.
+   */
+  clearThinkingState(): void {
+    this.isThinking = false;
+    this.currentThinkingContent = "";
   }
 
   // ===========================================================================

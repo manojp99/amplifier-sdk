@@ -62,6 +62,9 @@ class AmplifierClient:
         self._client_tools: dict[str, ClientTool] = {}
         self._event_handlers: dict[str, list[Any]] = {}
         self._approval_handler: Any = None
+        self._thinking_handlers: list[Any] = []
+        self._is_thinking: bool = False
+        self._current_thinking_content: str = ""
         self._agent_spawned_handlers: set[Any] = set()
         self._agent_completed_handlers: set[Any] = set()
         self._agent_hierarchy: dict[str, AgentNode] = {}
@@ -213,6 +216,11 @@ class AmplifierClient:
 
     async def _emit_event(self, event: Event) -> None:
         """Emit event to registered handlers."""
+        # Handle thinking events first
+        if event.type == "thinking.delta":
+            await self._handle_thinking(event)
+
+        # Then call generic event handlers
         handlers = self._event_handlers.get(event.type, [])
         for handler in handlers:
             try:
@@ -461,6 +469,87 @@ class AmplifierClient:
         Useful when starting a new prompt or resetting state.
         """
         self._agent_hierarchy.clear()
+
+    # =========================================================================
+    # Thinking Stream Helpers
+    # =========================================================================
+
+    async def _handle_thinking(self, event: Event) -> None:
+        """Handle thinking.delta event and update state."""
+        if event.type != "thinking.delta":
+            return
+
+        delta = event.data.get("delta", "")
+
+        # Update thinking state
+        if not self._is_thinking:
+            self._is_thinking = True
+            self._current_thinking_content = ""
+
+        self._current_thinking_content += delta
+
+        # Call registered handlers
+        thinking_state = {
+            "is_thinking": self._is_thinking,
+            "content": self._current_thinking_content,
+        }
+
+        for handler in self._thinking_handlers:
+            try:
+                result = handler(thinking_state)
+                if hasattr(result, "__await__"):
+                    await result
+            except Exception as err:
+                print(f"Thinking handler error: {err}")
+
+    def on_thinking(self, handler: Any) -> None:
+        """Register thinking event handler (convenience method).
+
+        Subscribe to AI reasoning/thinking events with automatic state tracking.
+
+        Args:
+            handler: Callback function for thinking events
+
+        Example:
+            ```python
+            def handle_thinking(thinking):
+                if thinking["is_thinking"]:
+                    show_thinking_panel(thinking["content"])
+                else:
+                    hide_thinking_panel()
+
+            client.on_thinking(handle_thinking)
+            ```
+        """
+        self._thinking_handlers.append(handler)
+
+    def off_thinking(self, handler: Any) -> None:
+        """Unregister thinking handler.
+
+        Args:
+            handler: Handler to remove
+        """
+        if handler in self._thinking_handlers:
+            self._thinking_handlers.remove(handler)
+
+    def get_thinking_state(self) -> dict[str, Any]:
+        """Get current thinking state.
+
+        Returns:
+            Dictionary with is_thinking and content fields
+        """
+        return {
+            "is_thinking": self._is_thinking,
+            "content": self._current_thinking_content,
+        }
+
+    def clear_thinking_state(self) -> None:
+        """Clear thinking state.
+
+        Useful when starting a new prompt or when thinking completes.
+        """
+        self._is_thinking = False
+        self._current_thinking_content = ""
 
     # =========================================================================
     # Health & Capabilities
