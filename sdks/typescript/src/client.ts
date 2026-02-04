@@ -1674,15 +1674,34 @@ export class AmplifierClient {
   private serializeBundleDefinition(
     bundle: import("./types").BundleDefinition
   ): Record<string, unknown> {
+    // Transform clientTools from names to full schemas
+    const clientToolSchemas = bundle.clientTools?.map((toolName) => {
+      const tool = this.clientTools.get(toolName);
+      if (!tool) {
+        this.debug(`Warning: Client tool "${toolName}" referenced but not registered`);
+        // Return basic schema if tool not registered yet
+        return { name: toolName };
+      }
+      
+      // Send full schema so LLM knows about the tool
+      return {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters || {},
+      };
+    });
+    
     return {
       name: bundle.name,
       version: bundle.version ?? "1.0.0",
       description: bundle.description,
       providers: bundle.providers,
       tools: bundle.tools,
+      clientTools: clientToolSchemas,  // Full schemas, not just names!
       hooks: bundle.hooks,
       orchestrator: bundle.orchestrator,
       context: bundle.context,
+      mcpServers: bundle.mcpServers,
       agents: bundle.agents?.map((a) => ({
         name: a.name,
         description: a.description,

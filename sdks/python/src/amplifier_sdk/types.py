@@ -342,8 +342,13 @@ class BundleDefinition:
     session: dict[str, Any] = field(default_factory=dict)
     includes: list[str] = field(default_factory=list)
 
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for API request."""
+    def to_dict(self, client_tools_registry: dict | None = None) -> dict[str, Any]:
+        """Convert to dictionary for API request.
+
+        Args:
+            client_tools_registry: Optional registry of registered client tools
+                                   to transform tool names into full schemas
+        """
         result: dict[str, Any] = {
             "name": self.name,
             "version": self.version,
@@ -354,6 +359,27 @@ class BundleDefinition:
             result["providers"] = [p.to_dict() for p in self.providers]
         if self.tools:
             result["tools"] = [t.to_dict() for t in self.tools]
+
+        # Transform client_tools from names to full schemas
+        if self.client_tools and client_tools_registry:
+            result["clientTools"] = []
+            for tool_name in self.client_tools:
+                tool = client_tools_registry.get(tool_name)
+                if tool:
+                    result["clientTools"].append(
+                        {
+                            "name": tool.name,
+                            "description": tool.description,
+                            "parameters": tool.parameters,
+                        }
+                    )
+                else:
+                    # Tool not registered yet, send name only
+                    result["clientTools"].append({"name": tool_name})
+        elif self.client_tools:
+            # No registry, send names only (fallback)
+            result["clientTools"] = self.client_tools
+
         if self.hooks:
             result["hooks"] = [h.to_dict() for h in self.hooks]
         if self.orchestrator:
@@ -401,15 +427,19 @@ class SessionConfig:
     behaviors: list[str] = field(default_factory=list)
     mcp_servers: list[McpServerConfig] = field(default_factory=list)
 
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary, excluding None values."""
+    def to_dict(self, client_tools_registry: dict | None = None) -> dict[str, Any]:
+        """Convert to dictionary, excluding None values.
+        
+        Args:
+            client_tools_registry: Optional registry of registered client tools
+        """
         result: dict[str, Any] = {}
         if self.bundle:
             if isinstance(self.bundle, str):
                 result["bundle"] = self.bundle
             else:
-                # Runtime bundle definition
-                result["bundle_definition"] = self.bundle.to_dict()
+                # Runtime bundle definition - pass registry for client tool schemas
+                result["bundle_definition"] = self.bundle.to_dict(client_tools_registry)
         if self.provider:
             result["provider"] = self.provider
         if self.model:

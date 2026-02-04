@@ -761,7 +761,8 @@ class AmplifierClient:
             model=model,
             working_directory=working_directory,
         )
-        response = await client.post("/v1/session", json=config.to_dict())
+        # Pass client tools registry for schema transformation
+        response = await client.post("/v1/session", json=config.to_dict(self._client_tools))
         response.raise_for_status()
         return SessionInfo.from_dict(response.json())
 
