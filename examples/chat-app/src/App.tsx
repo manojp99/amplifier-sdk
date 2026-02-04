@@ -17,7 +17,7 @@ const DEMO_BUNDLE: BundleDefinition = {
   tools: [
     { module: "tool-bash" },
     { module: "tool-filesystem" },
-    { module: "tool-web-fetch" },
+    { module: "tool-web" },  // Correct name!
   ],
   
   // Client-side tools (THE killer feature!)
@@ -25,7 +25,7 @@ const DEMO_BUNDLE: BundleDefinition = {
   
   // Hooks for observability
   hooks: [
-    { module: "hook-logging" },
+    { module: "hooks-logging" },  // Plural - correct name!
   ],
   
   // Instructions
