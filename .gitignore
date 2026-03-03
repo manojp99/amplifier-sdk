@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.js.map
+*.mjs.map
+*.d.ts.map
+__pycache__/
+*.pyc
+.uv/
+runtime/.venv/
