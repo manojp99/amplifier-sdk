@@ -12,7 +12,6 @@
       "require": "./dist/index.js"
     }
   },
-  "files": ["dist"],
   "scripts": {
     "prepare": "tsup src/index.ts --format cjs,esm --dts",
     "build": "tsup src/index.ts --format cjs,esm --dts",
