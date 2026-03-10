@@ -306,45 +306,6 @@ client.clearThinkingState(): void
 
 ---
 
-### Client-Side Tools
-
-Register tools that execute in your application. The LLM can call them, but the handler runs locally — not on the server.
-
-#### `registerTool(tool)`
-
-```typescript
-client.registerTool(tool: ClientTool): void
-```
-
-**`ClientTool` shape:**
-
-```typescript
-{
-  name: string;
-  description: string;
-  parameters?: {
-    type: "object";
-    properties: Record<string, { type: string; description?: string; [key: string]: unknown }>;
-    required?: string[];
-  };
-  handler: (args: Record<string, unknown>) => Promise<unknown> | unknown;
-}
-```
-
-#### `unregisterTool(name)`
-
-```typescript
-client.unregisterTool(name: string): boolean
-```
-
-#### `getClientTools()`
-
-```typescript
-client.getClientTools(): ClientTool[]
-```
-
----
-
 ### Behaviors
 
 Behaviors are reusable capability packages that can be applied to sessions.
@@ -726,7 +687,6 @@ interface BundleDefinition {
   description?: string;
   providers?: ModuleConfig[];
   tools?: ModuleConfig[];
-  clientTools?: string[];
   hooks?: ModuleConfig[];
   orchestrator?: ModuleConfig;
   context?: ModuleConfig;
@@ -761,7 +721,6 @@ interface BehaviorDefinition {
   description?: string;
   instructions?: string;
   tools?: ModuleConfig[];
-  clientTools?: string[];
   providers?: ModuleConfig[];
   hooks?: ModuleConfig[];
 }

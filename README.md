@@ -1,6 +1,6 @@
 # Amplifier SDK
 
-A TypeScript client SDK for interacting with the [Amplifier](https://github.com/microsoft/amplifier) runtime server. The SDK handles session management, streaming AI responses, recipe execution, and client-side tool registration over a clean HTTP/SSE interface.
+A TypeScript client SDK for interacting with the [Amplifier](https://github.com/microsoft/amplifier) runtime server. The SDK handles session management, streaming AI responses, and recipe execution over a clean HTTP/SSE interface.
 
 ## Architecture
 
@@ -143,34 +143,6 @@ await resumed.sendSync("What did I just say?");
 
 // Clean up
 await client.deleteSession(session.id);
-```
-
-### Client-side tools
-
-Register tools that run in your application (not on the server) and are callable by the AI:
-
-```typescript
-const client = new AmplifierClient();
-
-client.registerTool({
-  name: "get_weather",
-  description: "Get the current weather for a city",
-  parameters: {
-    type: "object",
-    properties: {
-      city: { type: "string", description: "City name" },
-    },
-    required: ["city"],
-  },
-  handler: async ({ city }) => {
-    return { temperature: 22, condition: "sunny", city };
-  },
-});
-
-const session = await client.createSession();
-for await (const event of client.prompt(session.id, "What's the weather in London?")) {
-  if (event.type === "content.delta") process.stdout.write(event.data.delta);
-}
 ```
 
 ### Approval gates

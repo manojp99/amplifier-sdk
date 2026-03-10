@@ -78,20 +78,7 @@ Creates a new AI agent session.
   "model": "claude-sonnet-4-5",
   "working_directory": "/home/user/project",
   "storage_directory": "/home/user/.sessions",
-  "behaviors": ["code-review"],
-  "client_tools": [
-    {
-      "name": "get_weather",
-      "description": "Get weather for a city",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "city": { "type": "string" }
-        },
-        "required": ["city"]
-      }
-    }
-  ]
+  "behaviors": ["code-review"]
 }
 ```
 
@@ -104,7 +91,6 @@ Creates a new AI agent session.
 | `working_directory` | `string` | Working directory for tool execution |
 | `storage_directory` | `string` | Directory for session persistence |
 | `behaviors` | `string[]` | Behavior names to apply |
-| `client_tools` | `object[]` | Client-side tool schemas (handlers run in the calling app) |
 
 **Response `201`**
 
