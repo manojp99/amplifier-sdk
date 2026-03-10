@@ -40,20 +40,30 @@ The **TypeScript SDK** (`src/`) talks to the **Python runtime server** (`runtime
 
 ### TypeScript SDK
 
+Install directly from GitHub:
+
 ```bash
-npm install @workspaces/amplifier-sdk
+npm install github:manojp99/amplifier-sdk
 # or
-pnpm add @workspaces/amplifier-sdk
+pnpm add github:manojp99/amplifier-sdk
 # or
-yarn add @workspaces/amplifier-sdk
+yarn add github:manojp99/amplifier-sdk
+```
+
+Or with a specific commit/tag pinned:
+
+```bash
+npm install github:manojp99/amplifier-sdk#<commit-or-tag>
 ```
 
 ### Python Runtime Server
 
+Install directly from GitHub (the runtime lives in the `runtime/` subdirectory):
+
 ```bash
-pip install amplifier-app-runtime
-# or
-uv pip install amplifier-app-runtime
+pip install git+https://github.com/manojp99/amplifier-sdk.git#subdirectory=runtime
+# or with uv (recommended)
+uv pip install git+https://github.com/manojp99/amplifier-sdk.git#subdirectory=runtime
 ```
 
 ---
